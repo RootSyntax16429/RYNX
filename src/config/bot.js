@@ -13,6 +13,12 @@ export const botConfig = {
   },
 };
 
+export const BotConfig = botConfig;
+
+export function getDefaultApplicationQuestions() {
+  return [];
+}
+
 export function getColor(color) {
   return color || "#336699";
 }

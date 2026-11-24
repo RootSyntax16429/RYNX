@@ -1,5 +1,10 @@
 export const botConfig = {
   commands: { prefix: "!" },
+  economy: {
+    currency: "🪙",
+    currencyName: "Coins",
+    startingBalance: 0,
+  },
   welcome: { defaultWelcomeChannel: null },
   tickets: { logChannel: null, defaultCategory: null },
   features: {

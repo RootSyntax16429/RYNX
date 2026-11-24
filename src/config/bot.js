@@ -1,5 +1,9 @@
 export const botConfig = {
   commands: { prefix: "!" },
+  presence: {
+    status: "online",
+    activities: [{ name: "Titan Bot", type: 0 }],
+  },
   economy: {
     currency: "🪙",
     currencyName: "Coins",
@@ -19,6 +23,17 @@ export const botConfig = {
 };
 
 export const BotConfig = botConfig;
+
+export function isBotOwner(userId) {
+  const owners = process.env.BOT_OWNERS
+    ? process.env.BOT_OWNERS.split(",").map((id) => id.trim())
+    : [];
+  return owners.includes(String(userId));
+}
+
+export function getBotMessage(key, fallback = "") {
+  return fallback || key || "";
+}
 
 export function getCommandPrefix(guildId = null) {
   return botConfig.commands?.prefix || "!";

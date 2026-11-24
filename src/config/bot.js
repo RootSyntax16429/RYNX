@@ -15,6 +15,10 @@ export const botConfig = {
 
 export const BotConfig = botConfig;
 
+export function getCommandPrefix(guildId = null) {
+  return botConfig.commands?.prefix || "!";
+}
+
 export function getDefaultApplicationQuestions() {
   return [];
 }

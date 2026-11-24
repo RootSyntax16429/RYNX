@@ -1,651 +1,695 @@
-import { logger } from '../utils/logger.js';
+import {
+  Client,
+  GatewayIntentBits,
+  Partials,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ChannelType,
+  PermissionFlagsBits,
+  SlashCommandBuilder,
+  REST,
+  Routes,
+} from "discord.js";
+import { botConfig, getColor, isFeatureEnabled } from "./config.js";
 
-export const botConfig = {
-  // =========================
-  // BOT PRESENCE (what users see under the bot name)
-  // =========================
-  // `status` options:
-  // - "online"    = green dot
-  // - "idle"      = yellow moon
-  // - "dnd"       = red do-not-disturb
-  // - "invisible" = appears offline
-  presence: {
-    // Current online state shown on Discord.
-    status: "online",
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
+  partials: [Partials.Channel, Partials.Message],
+});
 
-    // Activity lines shown under the bot name.
-    // `type` number mapping from Discord:
-    // 0 = Playing
-    // 1 = Streaming
-    // 2 = Listening
-    // 3 = Watching
-    // 4 = Custom
-    // 5 = Competing
-    activities: [
+const prefix = botConfig.commands?.prefix || "!";
+
+const slashCommands = [
+  new SlashCommandBuilder()
+    .setName("اظهار")
+    .setDescription("عرض جميع أوامر البوت مقسمة حسب الأقسام"),
+
+  new SlashCommandBuilder()
+    .setName("سستم")
+    .setDescription("عرض لوحة حالة ومعلومات السيرفر"),
+
+  new SlashCommandBuilder()
+    .setName("تكت")
+    .setDescription("إرسال لوحة فتح التذاكر في الروم الحالي"),
+
+  new SlashCommandBuilder()
+    .setName("ترحيب")
+    .setDescription("تعيين روم الترحيب أو إرسال رسالة ترحيب تجريبية")
+    .addChannelOption((opt) =>
+      opt
+        .setName("الروم")
+        .setDescription("اختر روم الترحيب")
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("طرد")
+    .setDescription("طرد عضو من السيرفر")
+    .addUserOption((opt) =>
+      opt.setName("العضو").setDescription("العضو المراد طرده").setRequired(true)
+    )
+    .addStringOption((opt) =>
+      opt.setName("السبب").setDescription("سبب الطرد").setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("باند")
+    .setDescription("حظر عضو من السيرفر")
+    .addUserOption((opt) =>
+      opt.setName("العضو").setDescription("العضو المراد حظره").setRequired(true)
+    )
+    .addStringOption((opt) =>
+      opt.setName("السبب").setDescription("سبب الحظر").setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("ميوت")
+    .setDescription("إعطاء عضو ميوت مؤقت")
+    .addUserOption((opt) =>
+      opt.setName("العضو").setDescription("العضو").setRequired(true)
+    )
+    .addIntegerOption((opt) =>
+      opt
+        .setName("الدقائق")
+        .setDescription("مدة الميوت بالدقائق")
+        .setMinValue(1)
+        .setMaxValue(40320)
+        .setRequired(true)
+    )
+    .addStringOption((opt) =>
+      opt.setName("السبب").setDescription("سبب الميوت").setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("مسح")
+    .setDescription("مسح عدد من الرسائل من الروم الحالي")
+    .addIntegerOption((opt) =>
+      opt
+        .setName("العدد")
+        .setDescription("من 1 إلى 100 رسالة")
+        .setMinValue(1)
+        .setMaxValue(100)
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("سوالف")
+    .setDescription("سؤال سوالف عشوائي لتنشيط الشات"),
+
+  new SlashCommandBuilder()
+    .setName("كت")
+    .setDescription("فقرة كت تويت أو قرار سريع"),
+].map((cmd) => cmd.toJSON());
+
+const SAWALEF_QUESTIONS = [
+  "لو تقدر ترجع بالزمن ليوم واحد في حياتك، وش تختار؟",
+  "أكثر أكلة مستحيل تمل منها لو أكلتها كل أسبوع؟",
+  "وش أكثر لعبة أو فيلم يشدك هالفترة؟",
+  "لو معك ميزانية مفتوحة لمشروع أو فكرة، وش تسوي؟",
+  "أفضل مكان تحب تقضي فيه وقتك: البيت، طلعة مع الشباب، ولا مكان هادي؟",
+];
+
+const KAT_PROMPTS = [
+  "كت: تشتري راحة بالك ولا مبلغ كبير بشروط صعبة؟",
+  "كت: تسافر لحالك ولا مع شلة تحبها؟",
+  "كت: تشتغل في مشروع خاص ولا وظيفة ثابتة براتب ممتاز؟",
+  "كت: تقضي يوم كامل بدون جوال ولا يوم كامل بدون نت؟",
+];
+
+function hasStaffPerm(member, configRoles = []) {
+  if (!member) return false;
+  if (member.permissions.has(PermissionFlagsBits.Administrator)) return true;
+  if (member.permissions.has(PermissionFlagsBits.ManageGuild)) return true;
+  return configRoles.some((roleId) => member.roles.cache.has(roleId));
+}
+
+async function sendLog(guild, title, description, colorHex = botConfig.embeds.colors.info) {
+  if (!isFeatureEnabled("logging")) return;
+  const logChannelId = botConfig.tickets?.logChannel || process.env.MOD_LOG_CHANNEL_ID;
+  if (!logChannelId) return;
+  const channel = guild.channels.cache.get(logChannelId);
+  if (!channel || !channel.isTextBased()) return;
+
+  const embed = new EmbedBuilder()
+    .setTitle(title)
+    .setDescription(description)
+    .setColor(getColor(colorHex))
+    .setFooter({ text: botConfig.embeds.footer?.text || "Server System" })
+    .setTimestamp();
+
+  await channel.send({ embeds: [embed] }).catch(() => {});
+}
+
+function buildCommandsHelpEmbed(guildName) {
+  const p = prefix;
+  return new EmbedBuilder()
+    .setTitle(`قائمة أوامر البوت • ${guildName}`)
+    .setDescription(`تقدر تستخدم الأوامر بالبادئة \`${p}\` أو عبر أوامر السلاش \`/\``)
+    .setColor(getColor(botConfig.embeds.colors.primary))
+    .addFields(
       {
-        name: "Custom Status", // required by Discord API, not shown in the client
-        state: "stalking",     // this is what people actually see
-        type: 4,               // Custom
+        name: "🎫 التذاكر (Tickets)",
+        value: [
+          `• \`${p}تكت\` أو \`/تكت\` — إرسال لوحة فتح التذاكر`,
+          `• أزرار داخل التذكرة: **استلام التذكرة** / **إغلاق التذكرة**`,
+        ].join("\n"),
+        inline: false,
       },
-    ],
-  },
-
-  // =========================
-  // COMMAND BEHAVIOR
-  // =========================
-  commands: {
-    // Bot owner user IDs (comma-separated in OWNER_IDS env var).
-    // Owners can access owner/admin-level bot commands.
-    owners: process.env.OWNER_IDS?.split(",").map((id) => id.trim()).filter(Boolean) || [],
-
-    // Default wait time between command uses (in seconds).
-    defaultCooldown: 3,
-
-    // If true, old commands are removed before re-registering.
-    deleteCommands: false,
-
-    // Optional server ID retained for tutorial compatibility; not used for command registration.
-    testGuildId: process.env.TEST_GUILD_ID,
-
-    // When true (or MAINTENANCE_MODE=true), only bot owners can run commands.
-    maintenanceMode: process.env.MAINTENANCE_MODE === "true",
-
-    // Command prefix for text-based commands (e.g., "!" for "!ping").
-    // Supports both slash commands and prefix commands.
-    prefix: process.env.PREFIX || "!",
-  },
-
-  // =========================
-  // APPLICATIONS SYSTEM
-  // =========================
-  applications: {
-    // Default questions shown when someone fills out an application.
-    defaultQuestions: [
-      { question: "What is your name?", required: true },
-      { question: "How old are you?", required: true },
-      { question: "Why do you want to join?", required: true },
-    ],
-
-    // Embed colors by application status.
-    statusColors: {
-      pending: "#FFA500",
-      approved: "#00FF00",
-      denied: "#FF0000",
-    },
-
-    // How long users must wait before submitting another application (hours).
-    applicationCooldown: 24,
-
-    // Auto-delete denied applications after this many days.
-    deleteDeniedAfter: 7,
-
-    // Auto-delete approved applications after this many days.
-    deleteApprovedAfter: 30,
-
-    // Role IDs allowed to manage applications.
-    managerRoles: [], // Will be populated from environment or database
-  },
-
-  // =========================
-  // EMBED COLORS & BRANDING
-  // =========================
-  // IMPORTANT: This is the SINGLE SOURCE OF TRUTH for all bot colors
-  embeds: {
-    colors: {
-      // Main brand colors.
-      primary: "#336699",
-      secondary: "#2F3136",
-
-      // Standard status colors for success/error/warning/info messages.
-      success: "#57F287",
-      error: "#ED4245",
-      warning: "#FEE75C",
-      info: "#3498DB",
-
-      // Neutral utility colors.
-      light: "#FFFFFF",
-      dark: "#202225",
-      gray: "#99AAB5",
-
-      // Discord-style palette shortcuts.
-      blurple: "#5865F2",
-      green: "#57F287",
-      yellow: "#FEE75C",
-      fuchsia: "#EB459E",
-      red: "#ED4245",
-      black: "#000000",
-
-      // Feature-specific colors.
-      giveaway: {
-        active: "#57F287",
-        ended: "#ED4245",
+      {
+        name: "👋 الترحيب (Welcome)",
+        value: [
+          `• ترحيب تلقائي عند دخول الأعضاء في روم الترحيب المحدد`,
+          `• \`${p}ترحيب [#روم]\` أو \`/ترحيب [الروم]\` — تعيين روم الترحيب أو إرسال ترحيب تجريبي`,
+        ].join("\n"),
+        inline: false,
       },
-      ticket: {
-        open: "#57F287",
-        claimed: "#FAA61A",
-        closed: "#ED4245",
-        pending: "#99AAB5",
+      {
+        name: "🛡️ الإشراف (Moderation)",
+        value: [
+          `• \`${p}طرد @عضو [السبب]\` أو \`/طرد\``,
+          `• \`${p}باند @عضو [السبب]\` أو \`/باند\``,
+          `• \`${p}ميوت @عضو <دقائق> [السبب]\` أو \`/ميوت\``,
+          `• \`${p}مسح <1-100>\` أو \`/مسح\``,
+        ].join("\n"),
+        inline: false,
       },
-      economy: "#F1C40F",
-      birthday: "#E91E63",
-      moderation: "#9B59B6",
-
-      // Ticket priority color mapping.
-      priority: {
-        none: "#95A5A6",
-        low: "#3498db",
-        medium: "#2ecc71",
-        high: "#f1c40f",
-        urgent: "#e74c3c",
+      {
+        name: "⚙️ السستم والإدارة (System)",
+        value: [
+          `• \`${p}اظهار\` أو \`/اظهار\` — عرض جميع أوامر البوت`,
+          `• \`${p}سستم\` أو \`/سستم\` — عرض حالة الأنظمة ومعلومات السيرفر`,
+        ].join("\n"),
+        inline: false,
       },
-    },
-    footer: {
-      // Default footer text used in bot embeds.
-      text: "Titan Bot",
-      // Footer icon URL (null = no icon).
-      icon: null,
-    },
-    // Default thumbnail URL for embeds (null = no thumbnail).
-    thumbnail: null,
-    author: {
-      // Optional default embed author block.
-      name: null,
-      icon: null,
-      url: null,
-    },
-  },
-
-  // =========================
-  // ECONOMY SETTINGS
-  // =========================
-  economy: {
-    currency: {
-      // Currency display name.
-      name: "coins",
-      // Plural display name.
-      namePlural: "coins",
-      // Currency symbol shown in balances.
-      symbol: "$",
-    },
-
-    // Starting balance for new users.
-    startingBalance: 0,
-
-    // Maximum bank amount before upgrades (if upgrades are used).
-    baseBankCapacity: 100000,
-
-    // Daily reward amount.
-    dailyAmount: 100,
-
-    // Work command random payout range.
-    workMin: 10,
-    workMax: 100,
-
-    // Beg command random payout range.
-    begMin: 5,
-    begMax: 50,
-
-    // Command cooldowns (milliseconds).
-    cooldowns: {
-      daily: 24 * 60 * 60 * 1000,
-      work: 60 * 60 * 1000,
-      crime: 2 * 60 * 60 * 1000,
-      rob: 4 * 60 * 60 * 1000,
-    },
-
-    // Chance to succeed when robbing (0.4 = 40%).
-    robSuccessRate: 0.4,
-
-    // Jail time after failed rob (milliseconds).
-    // 3600000 = 1 hour.
-    robFailJailTime: 3600000,
-  },
-
-  // =========================
-  // SHOP SETTINGS
-  // =========================
-  // Add shop defaults here when needed.
-  shop: {
-
-  },
-
-  // =========================
-  // TICKET SYSTEM
-  // =========================
-  tickets: {
-    // Category ID where new tickets are created (null = no forced category).
-    defaultCategory: null,
-
-    // Role IDs allowed to manage/support tickets.
-    supportRoles: [],
-
-    // Priority options users/staff can assign.
-    priorities: {
-      none: {
-        emoji: "⚪",
-        color: "#95A5A6",
-        label: "None",
-      },
-      low: {
-        emoji: "🟢",
-        color: "#2ECC71",
-        label: "Low",
-      },
-      medium: {
-        emoji: "🟡",
-        color: "#F1C40F",
-        label: "Medium",
-      },
-      high: {
-        emoji: "🔴",
-        color: "#E74C3C",
-        label: "High",
-      },
-      urgent: {
-        emoji: "🚨",
-        color: "#E91E63",
-        label: "Urgent",
-      },
-    },
-
-    // Default priority for new tickets.
-    defaultPriority: "none",
-
-    // Category ID where closed tickets are archived.
-    archiveCategory: null,
-
-    // Channel ID where ticket logs are sent.
-    logChannel: null,
-  },
-
-  // =========================
-  // GIVEAWAY SETTINGS
-  // =========================
-  giveaways: {
-    // Default giveaway duration in milliseconds.
-    // 86400000 = 24 hours.
-    defaultDuration: 86400000,
-
-    // Allowed winner count range.
-    minimumWinners: 1,
-    maximumWinners: 10,
-
-    // Allowed giveaway duration range in milliseconds.
-    // 300000 = 5 minutes.
-    minimumDuration: 300000,
-    // 2592000000 = 30 days.
-    maximumDuration: 2592000000,
-
-    // Role IDs allowed to host giveaways.
-    allowedRoles: [],
-
-    // Role IDs that bypass giveaway restrictions.
-    bypassRoles: [],
-  },
-
-  // =========================
-  // BIRTHDAY SETTINGS
-  // =========================
-  birthday: {
-    // Role ID given to users on their birthday.
-    defaultRole: null,
-
-    // Channel ID where birthday announcements are posted.
-    announcementChannel: null,
-
-    // Timezone used to calculate birthday dates.
-    timezone: "UTC",
-  },
-
-  // =========================
-  // VERIFICATION SETTINGS
-  // =========================
-  verification: {
-    // Message shown when posting the verification panel.
-    defaultMessage: "Click the button below to verify yourself and gain access to the server!",
-
-    // Text on the verification button.
-    defaultButtonText: "Verify",
-
-    // Automatic verification behavior.
-    autoVerify: {
-      // How automatic verification decides who is auto-approved:
-      // - "none"        = everyone is auto-verified immediately
-      // - "account_age" = account must be older than set days
-      // - "server_size" = auto-verify everyone only in smaller servers
-      defaultCriteria: "none",
-
-      // Days used when `defaultCriteria` is `account_age`.
-      defaultAccountAgeDays: 7,
-
-      // Member count threshold used when `defaultCriteria` is `server_size`.
-      // Example: 1000 means auto-verify if server has fewer than 1000 members.
-      serverSizeThreshold: 1000,
-
-      // Allowed safety limits for account-age requirements.
-      // 1 = minimum day, 365 = maximum days.
-      minAccountAge: 1,
-      maxAccountAge: 365,
-
-      // If true, user receives a DM after verification.
-      sendDMNotification: true,
-
-      // Human-readable descriptions for each criteria mode.
-      criteria: {
-        account_age: "Account must be older than specified days",
-        server_size: "All users if server has less than 1000 members",
-        none: "All users immediately"
+      {
+        name: "💬 سوالف وفعاليات (Fun & Sawalef)",
+        value: [
+          `• \`${p}سوالف\` أو \`/سوالف\` — سؤال نقاش وسوالف عشوائي`,
+          `• \`${p}كت\` أو \`/كت\` — فقرة كت وتحدي خيارات`,
+        ].join("\n"),
+        inline: false,
       }
-    },
+    )
+    .setFooter({ text: botConfig.embeds.footer?.text || "Server System" })
+    .setTimestamp();
+}
 
-    // Minimum time between verification attempts (milliseconds).
-    // 5000 = 5 seconds.
-    verificationCooldown: 5000,
+async function createTicketPanel(channel) {
+  const embed = new EmbedBuilder()
+    .setTitle("الدعم الفني والتذاكر")
+    .setDescription("اضغط على الزر بالأسفل لفتح تذكرة جديدة والتواصل مع الإدارة.")
+    .setColor(getColor(botConfig.embeds.colors.ticket?.open || "#57F287"))
+    .setFooter({ text: botConfig.embeds.footer?.text || "Server System" });
 
-    // Maximum failed attempts allowed inside the time window below.
-    maxVerificationAttempts: 3,
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("open_ticket")
+      .setLabel("فتح تذكرة")
+      .setStyle(ButtonStyle.Primary)
+  );
 
-    // Time window for counting attempts (milliseconds).
-    // 60000 = 1 minute.
-    attemptWindow: 60000,
+  await channel.send({ embeds: [embed], components: [row] });
+}
 
-    // In-memory safety limits (helps avoid unbounded memory growth).
-    maxCooldownEntries: 10000,
-    maxAttemptEntries: 10000,
-    // Cleanup frequency for cooldown/attempt maps (milliseconds).
-    // 300000 = 5 minutes.
-    cooldownCleanupInterval: 300000,
-    // Maximum metadata payload size for audit entries (bytes).
-    maxAuditMetadataBytes: 4096,
-    // Maximum number of audit entries kept in memory.
-    maxInMemoryAuditEntries: 1000,
-    // If true, log every verification action.
-    logAllVerifications: true,
-    // If true, preserve verification audit history.
-    keepAuditTrail: true,
-  },
+async function sendWelcomeMessage(guild, member, targetChannelId = null) {
+  if (!isFeatureEnabled("welcome")) return false;
+  const channelId = targetChannelId || botConfig.welcome?.defaultWelcomeChannel;
+  if (!channelId) return false;
 
-  // =========================
-  // WELCOME / GOODBYE MESSAGES
-  // =========================
-  welcome: {
-    // Welcome template posted when a user joins.
-    // Placeholders: {user}, {server}, {memberCount}
-    defaultWelcomeMessage:
-      "Welcome {user} to {server}! We now have {memberCount} members!",
-    // Goodbye template posted when a user leaves.
-    // Placeholders: {user}, {memberCount}
-    defaultGoodbyeMessage:
-      "{user} has left the server. We now have {memberCount} members.",
-    // Channel ID for welcome messages.
-    defaultWelcomeChannel: null,
-    // Channel ID for goodbye messages.
-    defaultGoodbyeChannel: null,
-  },
+  const channel = guild.channels.cache.get(channelId);
+  if (!channel || !channel.isTextBased()) return false;
 
-  // =========================
-  // COUNTER CHANNELS
-  // =========================
-  counters: {
-    defaults: {
-      // Default naming/description templates for counter entries.
-      name: "{name} Counter",
-      description: "Server {name} counter",
-      // Channel type used for counters (typically "voice").
-      type: "voice",
-      // Channel name format. `{count}` is replaced automatically.
-      channelName: "{name}-{count}",
-    },
-    permissions: {
-      // Default denied permissions for the counter channel.
-      deny: ["VIEW_CHANNEL"],
-      // Default allowed permissions for the counter channel.
-      allow: ["VIEW_CHANNEL", "CONNECT", "SPEAK"],
-    },
-    messages: {
-      // Default response messages for counter actions.
-      created: "✅ Created counter **{name}**",
-      deleted: "🗑️ Deleted counter **{name}**",
-      updated: "🔄 Updated counter **{name}**",
-    },
-    types: {
-      // Built-in counter types and how each count is calculated.
-      members: {
-        name: "👥 Members",
-        description: "Total members in the server",
-        getCount: (guild) => guild.memberCount.toString(),
-      },
-      bots: {
-        name: "🤖 Bots",
-        description: "Total bot accounts in the server",
-        getCount: (guild) =>
-          guild.members.cache.filter((m) => m.user.bot).size.toString(),
-      },
-      members_only: {
-        name: "👤 Humans",
-        description: "Total human members (non-bots)",
-        getCount: (guild) =>
-          guild.members.cache.filter((m) => !m.user.bot).size.toString(),
-      },
-    },
-  },
+  const rawMsg =
+    botConfig.welcome?.defaultWelcomeMessage ||
+    "حياك الله {user} في {server}! صار عدد الأعضاء الآن {memberCount}.";
 
-  // =========================
-  // GENERIC BOT MESSAGES
-  // =========================
-  messages: {
-    noPermission: "You do not have permission to use this command.",
-    cooldownActive: "Please wait {time} before using this command again.",
-    errorOccurred: "An error occurred while executing this command.",
-    missingPermissions:
-      "I am missing required permissions to perform this action.",
-    commandDisabled: "This command has been disabled.",
-    maintenanceMode: "The bot is currently in maintenance mode.",
-  },
+  const text = rawMsg
+    .replace(/\{user\}/g, `<@${member.id}>`)
+    .replace(/\{server\}/g, guild.name)
+    .replace(/\{memberCount\}/g, String(guild.memberCount));
 
-  // =========================
-  // FEATURE TOGGLES
-  // =========================
-  // Set any feature to `false` to disable it globally.
-  features: {
-    // Core systems.
-    economy: true,
-    leveling: true,
-    moderation: true,
-    logging: true,
-    welcome: true,
+  const embed = new EmbedBuilder()
+    .setTitle("عضو جديد انضم للسيرفر")
+    .setDescription(text)
+    .setThumbnail(member.user.displayAvatarURL({ extension: "png" }))
+    .setColor(getColor(botConfig.embeds.colors.success))
+    .setFooter({ text: botConfig.embeds.footer?.text || "Server System" })
+    .setTimestamp();
 
-    // Community engagement systems.
-    tickets: true,
-    giveaways: true,
-    birthday: true,
-    counter: true,
+  await channel.send({ embeds: [embed] }).catch(() => {});
+  return true;
+}
 
-    // Security and self-service systems.
-    verification: true,
-    reactionRoles: true,
-    joinToCreate: true,
+client.on("guildMemberAdd", async (member) => {
+  await sendWelcomeMessage(member.guild, member);
+});
 
-    // Utility/quality-of-life modules.
-    voice: true,
-    search: true,
-    tools: true,
-    utility: true,
-    community: true,
-    fun: true,
-    music: true,
-  },
-};
+client.on("messageCreate", async (message) => {
+  if (message.author.bot || !message.guild) return;
+  if (!message.content.startsWith(prefix)) return;
 
-export function validateConfig(config) {
-  const errors = [];
+  const args = message.content.slice(prefix.length).trim().split(/\s+/);
+  const cmd = args.shift()?.toLowerCase();
+  const member = message.member;
 
-  if (process.env.NODE_ENV !== 'production') {
-    logger.debug('Environment variables check:');
-    logger.debug('DISCORD_TOKEN exists:', !!process.env.DISCORD_TOKEN);
-    logger.debug('TOKEN exists:', !!process.env.TOKEN);
-    logger.debug('CLIENT_ID exists:', !!process.env.CLIENT_ID);
-    logger.debug('GUILD_ID exists:', !!process.env.GUILD_ID);
-    logger.debug('POSTGRES_HOST exists:', !!process.env.POSTGRES_HOST);
-    logger.debug('NODE_ENV:', process.env.NODE_ENV);
+  if (cmd === "اظهار" || cmd === "اوامر" || cmd === "help") {
+    return message.reply({ embeds: [buildCommandsHelpEmbed(message.guild.name)] });
   }
 
-  if (!process.env.DISCORD_TOKEN && !process.env.TOKEN) {
-    errors.push("Bot token is required (DISCORD_TOKEN or TOKEN environment variable)");
+  if (cmd === "سستم" || cmd === "system") {
+    const embed = new EmbedBuilder()
+      .setTitle(`لوحة نظام السيرفر • ${message.guild.name}`)
+      .setColor(getColor(botConfig.embeds.colors.primary))
+      .addFields(
+        { name: "الأعضاء", value: `${message.guild.memberCount}`, inline: true },
+        { name: "الرومات", value: `${message.guild.channels.cache.size}`, inline: true },
+        { name: "الرتب", value: `${message.guild.roles.cache.size}`, inline: true },
+        {
+          name: "حالة الأنظمة",
+          value: [
+            `الإشراف: ${isFeatureEnabled("moderation") ? "✅" : "❌"}`,
+            `التذاكر: ${isFeatureEnabled("tickets") ? "✅" : "❌"}`,
+            `الترحيب: ${isFeatureEnabled("welcome") ? "✅" : "❌"}`,
+            `السجلات: ${isFeatureEnabled("logging") ? "✅" : "❌"}`,
+            `السوالف: ${isFeatureEnabled("fun") ? "✅" : "❌"}`,
+          ].join("\n"),
+          inline: false,
+        }
+      )
+      .setFooter({ text: botConfig.embeds.footer?.text || "Server System" })
+      .setTimestamp();
+
+    return message.reply({ embeds: [embed] });
   }
 
-  if (!process.env.CLIENT_ID) {
-    errors.push("Client ID is required (CLIENT_ID environment variable)");
+  if (cmd === "ترحيب" || cmd === "welcome") {
+    if (!hasStaffPerm(member)) {
+      return message.reply(botConfig.messages?.noPermission || "ما عندك صلاحية.");
+    }
+    const mentionedChannel = message.mentions.channels.first();
+    if (mentionedChannel) {
+      botConfig.welcome.defaultWelcomeChannel = mentionedChannel.id;
+      return message.reply(`تم تعيين روم الترحيب إلى <#${mentionedChannel.id}>.`);
+    }
+    const sent = await sendWelcomeMessage(message.guild, member);
+    if (!sent) {
+      return message.reply(`حدد روم الترحيب بالأمر: \`${prefix}ترحيب #الروم\``);
+    }
+    return message.reply("تم إرسال رسالة ترحيب تجريبية.");
   }
 
-  if (process.env.NODE_ENV === 'production') {
-    // A full connection URL (DATABASE_URL / POSTGRES_URL) satisfies all Postgres
-    // requirements, matching how src/config/database/postgres.js resolves the pool config.
-    const hasConnectionUrl = Boolean(process.env.POSTGRES_URL || process.env.DATABASE_URL);
+  if ((cmd === "تكت" || cmd === "ticket") && isFeatureEnabled("tickets")) {
+    if (!hasStaffPerm(member, botConfig.tickets?.supportRoles)) {
+      return message.reply(botConfig.messages?.noPermission || "ما عندك صلاحية.");
+    }
+    await createTicketPanel(message.channel);
+    return message.delete().catch(() => {});
+  }
 
-    if (!hasConnectionUrl) {
-      if (!process.env.POSTGRES_HOST) {
-        errors.push("PostgreSQL connection is required in production (set DATABASE_URL/POSTGRES_URL, or POSTGRES_HOST)");
+  if (cmd === "سوالف" && isFeatureEnabled("fun")) {
+    const q = SAWALEF_QUESTIONS[Math.floor(Math.random() * SAWALEF_QUESTIONS.length)];
+    const embed = new EmbedBuilder()
+      .setTitle("💬 سوالف")
+      .setDescription(q)
+      .setColor(getColor(botConfig.embeds.colors.economy || "#F1C40F"))
+      .setFooter({ text: botConfig.embeds.footer?.text || "Server System" });
+    return message.reply({ embeds: [embed] });
+  }
+
+  if (cmd === "كت" && isFeatureEnabled("fun")) {
+    const k = KAT_PROMPTS[Math.floor(Math.random() * KAT_PROMPTS.length)];
+    const embed = new EmbedBuilder()
+      .setTitle("🎲 فقرة كت")
+      .setDescription(k)
+      .setColor(getColor(botConfig.embeds.colors.info || "#3498DB"))
+      .setFooter({ text: botConfig.embeds.footer?.text || "Server System" });
+    return message.reply({ embeds: [embed] });
+  }
+
+  if (!isFeatureEnabled("moderation")) return;
+
+  if (cmd === "طرد" || cmd === "kick") {
+    if (!member.permissions.has(PermissionFlagsBits.KickMembers)) {
+      return message.reply(botConfig.messages?.noPermission || "ما عندك صلاحية.");
+    }
+    const target = message.mentions.members.first();
+    if (!target) return message.reply(`اكتب الأمر كذا: \`${prefix}طرد @شخص [السبب]\``);
+    if (!target.kickable) return message.reply("ما أقدر أطرد هذا العضو بسبب ترتيب الرتب أو الصلاحيات.");
+
+    const reason = args.slice(1).join(" ") || "بدون سبب محدد";
+    await target.kick(reason);
+    await sendLog(
+      message.guild,
+      "إجراء إشرافي: طرد",
+      `**العضو:** ${target.user.tag} (${target.id})\n**بواسطة:** ${message.author.tag}\n**السبب:** ${reason}`,
+      botConfig.embeds.colors.moderation
+    );
+    return message.reply(`تم طرد **${target.user.tag}** — السبب: ${reason}`);
+  }
+
+  if (cmd === "باند" || cmd === "ban") {
+    if (!member.permissions.has(PermissionFlagsBits.BanMembers)) {
+      return message.reply(botConfig.messages?.noPermission || "ما عندك صلاحية.");
+    }
+    const target = message.mentions.members.first();
+    if (!target) return message.reply(`اكتب الأمر كذا: \`${prefix}باند @شخص [السبب]\``);
+    if (!target.bannable) return message.reply("ما أقدر أعطيه باند بسبب ترتيب الرتب أو الصلاحيات.");
+
+    const reason = args.slice(1).join(" ") || "بدون سبب محدد";
+    await target.ban({ reason });
+    await sendLog(
+      message.guild,
+      "إجراء إشرافي: باند",
+      `**العضو:** ${target.user.tag} (${target.id})\n**بواسطة:** ${message.author.tag}\n**السبب:** ${reason}`,
+      botConfig.embeds.colors.error
+    );
+    return message.reply(`تم حظر **${target.user.tag}** — السبب: ${reason}`);
+  }
+
+  if (cmd === "ميوت" || cmd === "timeout") {
+    if (!member.permissions.has(PermissionFlagsBits.ModerateMembers)) {
+      return message.reply(botConfig.messages?.noPermission || "ما عندك صلاحية.");
+    }
+    const target = message.mentions.members.first();
+    const minutes = Number(args[1]);
+    if (!target || !minutes || minutes <= 0) {
+      return message.reply(`اكتب الأمر كذا: \`${prefix}ميوت @شخص 10 [السبب]\``);
+    }
+    if (!target.moderatable) return message.reply("ما أقدر أعطيه ميوت بسبب الصلاحيات.");
+
+    const reason = args.slice(2).join(" ") || "بدون سبب محدد";
+    await target.timeout(minutes * 60 * 1000, reason);
+    await sendLog(
+      message.guild,
+      "إجراء إشرافي: ميوت مؤقت",
+      `**العضو:** ${target.user.tag} (${target.id})\n**المدة:** ${minutes} دقيقة\n**بواسطة:** ${message.author.tag}\n**السبب:** ${reason}`,
+      botConfig.embeds.colors.warning
+    );
+    return message.reply(`تم إعطاء **${target.user.tag}** ميوت لمدة **${minutes}** دقيقة.`);
+  }
+
+  if (cmd === "مسح" || cmd === "clear") {
+    if (!member.permissions.has(PermissionFlagsBits.ManageMessages)) {
+      return message.reply(botConfig.messages?.noPermission || "ما عندك صلاحية.");
+    }
+    const amount = Number(args[0]);
+    if (!amount || amount < 1 || amount > 100) {
+      return message.reply(`اكتب عدد الرسائل من 1 إلى 100: \`${prefix}مسح 20\``);
+    }
+    const deleted = await message.channel.bulkDelete(amount, true);
+    return message.channel
+      .send(`تم مسح **${deleted.size}** رسالة.`)
+      .then((m) => setTimeout(() => m.delete().catch(() => {}), 4000));
+  }
+});
+
+client.on("interactionCreate", async (interaction) => {
+  if (interaction.isChatInputCommand() && interaction.guild) {
+    const { commandName, member, options } = interaction;
+
+    if (commandName === "اظهار") {
+      return interaction.reply({ embeds: [buildCommandsHelpEmbed(interaction.guild.name)] });
+    }
+
+    if (commandName === "سستم") {
+      const embed = new EmbedBuilder()
+        .setTitle(`لوحة نظام السيرفر • ${interaction.guild.name}`)
+        .setColor(getColor(botConfig.embeds.colors.primary))
+        .addFields(
+          { name: "الأعضاء", value: `${interaction.guild.memberCount}`, inline: true },
+          { name: "الرومات", value: `${interaction.guild.channels.cache.size}`, inline: true },
+          { name: "الرتب", value: `${interaction.guild.roles.cache.size}`, inline: true }
+        )
+        .setFooter({ text: botConfig.embeds.footer?.text || "Server System" })
+        .setTimestamp();
+      return interaction.reply({ embeds: [embed] });
+    }
+
+    if (commandName === "تكت") {
+      if (!isFeatureEnabled("tickets")) {
+        return interaction.reply({ content: "نظام التذاكر معطّل.", ephemeral: true });
       }
-      if (!process.env.POSTGRES_USER) {
-        errors.push("PostgreSQL user is required in production (set DATABASE_URL/POSTGRES_URL, or POSTGRES_USER)");
+      if (!hasStaffPerm(member, botConfig.tickets?.supportRoles)) {
+        return interaction.reply({ content: botConfig.messages?.noPermission || "ما عندك صلاحية.", ephemeral: true });
       }
-      if (!process.env.POSTGRES_PASSWORD) {
-        errors.push("PostgreSQL password is required in production (set DATABASE_URL/POSTGRES_URL, or POSTGRES_PASSWORD)");
+      await createTicketPanel(interaction.channel);
+      return interaction.reply({ content: "تم إرسال لوحة التذاكر.", ephemeral: true });
+    }
+
+    if (commandName === "ترحيب") {
+      if (!hasStaffPerm(member)) {
+        return interaction.reply({ content: botConfig.messages?.noPermission || "ما عندك صلاحية.", ephemeral: true });
       }
+      const selectedChannel = options.getChannel("الروم");
+      if (selectedChannel) {
+        botConfig.welcome.defaultWelcomeChannel = selectedChannel.id;
+        return interaction.reply({ content: `تم تعيين روم الترحيب إلى <#${selectedChannel.id}>.` });
+      }
+      const sent = await sendWelcomeMessage(interaction.guild, member);
+      if (!sent) {
+        return interaction.reply({ content: "حدد روم الترحيب أولاً باستخدام خيار الروم.", ephemeral: true });
+      }
+      return interaction.reply({ content: "تم إرسال رسالة الترحيب.", ephemeral: true });
+    }
+
+    if (commandName === "سوالف") {
+      const q = SAWALEF_QUESTIONS[Math.floor(Math.random() * SAWALEF_QUESTIONS.length)];
+      const embed = new EmbedBuilder()
+        .setTitle("💬 سوالف")
+        .setDescription(q)
+        .setColor(getColor(botConfig.embeds.colors.economy || "#F1C40F"));
+      return interaction.reply({ embeds: [embed] });
+    }
+
+    if (commandName === "كت") {
+      const k = KAT_PROMPTS[Math.floor(Math.random() * KAT_PROMPTS.length)];
+      const embed = new EmbedBuilder()
+        .setTitle("🎲 فقرة كت")
+        .setDescription(k)
+        .setColor(getColor(botConfig.embeds.colors.info || "#3498DB"));
+      return interaction.reply({ embeds: [embed] });
+    }
+
+    if (!isFeatureEnabled("moderation")) {
+      return interaction.reply({ content: "نظام الإشراف معطّل.", ephemeral: true });
+    }
+
+    if (commandName === "طرد") {
+      if (!member.permissions.has(PermissionFlagsBits.KickMembers)) {
+        return interaction.reply({ content: botConfig.messages?.noPermission || "ما عندك صلاحية.", ephemeral: true });
+      }
+      const targetUser = options.getUser("العضو", true);
+      const targetMember = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
+      if (!targetMember || !targetMember.kickable) {
+        return interaction.reply({ content: "ما أقدر أطرد هذا العضو.", ephemeral: true });
+      }
+      const reason = options.getString("السبب") || "بدون سبب محدد";
+      await targetMember.kick(reason);
+      await sendLog(
+        interaction.guild,
+        "إجراء إشرافي: طرد",
+        `**العضو:** ${targetUser.tag} (${targetUser.id})\n**بواسطة:** ${interaction.user.tag}\n**السبب:** ${reason}`,
+        botConfig.embeds.colors.moderation
+      );
+      return interaction.reply({ content: `تم طرد **${targetUser.tag}** — السبب: ${reason}` });
+    }
+
+    if (commandName === "باند") {
+      if (!member.permissions.has(PermissionFlagsBits.BanMembers)) {
+        return interaction.reply({ content: botConfig.messages?.noPermission || "ما عندك صلاحية.", ephemeral: true });
+      }
+      const targetUser = options.getUser("العضو", true);
+      const reason = options.getString("السبب") || "بدون سبب محدد";
+      await interaction.guild.members.ban(targetUser.id, { reason }).catch(() => null);
+      await sendLog(
+        interaction.guild,
+        "إجراء إشرافي: باند",
+        `**العضو:** ${targetUser.tag} (${targetUser.id})\n**بواسطة:** ${interaction.user.tag}\n**السبب:** ${reason}`,
+        botConfig.embeds.colors.error
+      );
+      return interaction.reply({ content: `تم حظر **${targetUser.tag}** — السبب: ${reason}` });
+    }
+
+    if (commandName === "ميوت") {
+      if (!member.permissions.has(PermissionFlagsBits.ModerateMembers)) {
+        return interaction.reply({ content: botConfig.messages?.noPermission || "ما عندك صلاحية.", ephemeral: true });
+      }
+      const targetUser = options.getUser("العضو", true);
+      const minutes = options.getInteger("الدقائق", true);
+      const reason = options.getString("السبب") || "بدون سبب محدد";
+      const targetMember = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
+      if (!targetMember || !targetMember.moderatable) {
+        return interaction.reply({ content: "ما أقدر أعطيه ميوت.", ephemeral: true });
+      }
+      await targetMember.timeout(minutes * 60 * 1000, reason);
+      await sendLog(
+        interaction.guild,
+        "إجراء إشرافي: ميوت مؤقت",
+        `**العضو:** ${targetUser.tag} (${targetUser.id})\n**المدة:** ${minutes} دقيقة\n**بواسطة:** ${interaction.user.tag}\n**السبب:** ${reason}`,
+        botConfig.embeds.colors.warning
+      );
+      return interaction.reply({ content: `تم إعطاء **${targetUser.tag}** ميوت لمدة **${minutes}** دقيقة.` });
+    }
+
+    if (commandName === "مسح") {
+      if (!member.permissions.has(PermissionFlagsBits.ManageMessages)) {
+        return interaction.reply({ content: botConfig.messages?.noPermission || "ما عندك صلاحية.", ephemeral: true });
+      }
+      const count = options.getInteger("العدد", true);
+      const deleted = await interaction.channel.bulkDelete(count, true);
+      return interaction.reply({ content: `تم مسح **${deleted.size}** رسالة.`, ephemeral: true });
     }
   }
 
-  return errors;
-}
+  if (!interaction.isButton() || !interaction.guild) return;
 
-const configErrors = validateConfig(botConfig);
-if (configErrors.length > 0) {
-  logger.error("Bot configuration errors:", configErrors.join("\n"));
-  if (process.env.NODE_ENV === "production") {
-    process.exit(1);
-  }
-}
+  if (interaction.customId === "open_ticket") {
+    if (!isFeatureEnabled("tickets")) {
+      return interaction.reply({ content: "نظام التذاكر معطّل حالياً.", ephemeral: true });
+    }
 
-export const BotConfig = botConfig;
-
-const COMMAND_CATEGORY_FEATURE_MAP = {
-  birthday: "birthday",
-  community: "community",
-  economy: "economy",
-  fun: "fun",
-  giveaway: "giveaways",
-  jointocreate: "joinToCreate",
-  leveling: "leveling",
-  logging: "logging",
-  moderation: "moderation",
-  music: "music",
-  reaction_roles: "reactionRoles",
-  search: "search",
-  serverstats: "counter",
-  ticket: "tickets",
-  tools: "tools",
-  utility: "utility",
-  verification: "verification",
-  welcome: "welcome",
-};
-
-function normalizeCategoryKey(category) {
-  return String(category || "").trim().toLowerCase().replace(/\s+/g, "_");
-}
-
-export function getCommandPrefix() {
-  return botConfig.commands?.prefix ?? "!";
-}
-
-export function getBotOwners() {
-  return (botConfig.commands?.owners ?? [])
-    .map((id) => String(id).trim())
-    .filter(Boolean);
-}
-
-export function isBotOwner(userId) {
-  if (!userId) {
-    return false;
-  }
-
-  return getBotOwners().includes(String(userId));
-}
-
-export function isMaintenanceMode() {
-  return botConfig.commands?.maintenanceMode === true;
-}
-
-export function getBotMessage(key, replacements = {}) {
-  let message = botConfig.messages?.[key] || key;
-
-  for (const [placeholder, value] of Object.entries(replacements)) {
-    message = message.replace(new RegExp(`\\{${placeholder}\\}`, "g"), String(value));
-  }
-
-  return message;
-}
-
-export function isFeatureEnabled(featureKey) {
-  if (!featureKey) {
-    return true;
-  }
-
-  return botConfig.features?.[featureKey] !== false;
-}
-
-export function isCommandCategoryEnabled(category) {
-  const normalized = normalizeCategoryKey(category);
-
-  if (!normalized || normalized === "core") {
-    return true;
-  }
-
-  const featureKey = COMMAND_CATEGORY_FEATURE_MAP[normalized];
-  if (!featureKey) {
-    return true;
-  }
-
-  return isFeatureEnabled(featureKey);
-}
-
-export function getApplicationStatusColor(status) {
-  const colors = botConfig.applications?.statusColors || {};
-  const hex = colors[status];
-  return hex ? getColor(hex) : getColor(status === "approved" ? "success" : status === "denied" ? "error" : "warning");
-}
-
-export function getDefaultApplicationQuestions() {
-  return (botConfig.applications?.defaultQuestions || []).map((entry) =>
-    typeof entry === "string" ? entry : entry.question,
-  ).filter(Boolean);
-}
-
-export function getColor(path, fallback = "#99AAB5") {
-  
-  if (typeof path === "number") return path;
-  if (typeof path === "string" && path.startsWith("#")) {
-    
-    return parseInt(path.replace("#", ""), 16);
-  }
-  const result = path
-    .split(".")
-    .reduce(
-      (obj, key) => (obj && obj[key] !== undefined ? obj[key] : fallback),
-      botConfig.embeds.colors,
+    const channelName = `ticket-${interaction.user.username.toLowerCase().replace(/[^a-z0-9]/g, "")}`.slice(0, 90);
+    const existing = interaction.guild.channels.cache.find(
+      (c) => c.type === ChannelType.GuildText && c.topic === `ticket_owner:${interaction.user.id}`
     );
-  
-  if (typeof result === "string" && result.startsWith("#")) {
-    return parseInt(result.replace("#", ""), 16);
+    if (existing) {
+      return interaction.reply({ content: `عندك تذكرة مفتوحة بالفعل: <#${existing.id}>`, ephemeral: true });
+    }
+
+    const supportRoleIds = botConfig.tickets?.supportRoles || [];
+    const permissionOverwrites = [
+      {
+        id: interaction.guild.roles.everyone.id,
+        deny: [PermissionFlagsBits.ViewChannel],
+      },
+      {
+        id: interaction.user.id,
+        allow: [
+          PermissionFlagsBits.ViewChannel,
+          PermissionFlagsBits.SendMessages,
+          PermissionFlagsBits.ReadMessageHistory,
+          PermissionFlagsBits.AttachFiles,
+        ],
+      },
+      {
+        id: client.user.id,
+        allow: [
+          PermissionFlagsBits.ViewChannel,
+          PermissionFlagsBits.SendMessages,
+          PermissionFlagsBits.ManageChannels,
+        ],
+      },
+    ];
+
+    for (const roleId of supportRoleIds) {
+      if (interaction.guild.roles.cache.has(roleId)) {
+        permissionOverwrites.push({
+          id: roleId,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory,
+          ],
+        });
+      }
+    }
+
+    const ticketChannel = await interaction.guild.channels.create({
+      name: channelName || `ticket-${interaction.user.id}`,
+      type: ChannelType.GuildText,
+      parent: botConfig.tickets?.defaultCategory || null,
+      topic: `ticket_owner:${interaction.user.id}`,
+      permissionOverwrites,
+    });
+
+    const embed = new EmbedBuilder()
+      .setTitle("تذكرة جديدة")
+      .setDescription(`حياك الله <@${interaction.user.id}>، اكتب مشكلتك أو استفسارك هنا وبيجيك الدعم الفني.`)
+      .setColor(getColor(botConfig.embeds.colors.ticket?.open || "#57F287"))
+      .setTimestamp();
+
+    const controls = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("claim_ticket")
+        .setLabel("استلام التذكرة")
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId("close_ticket")
+        .setLabel("إغلاق التذكرة")
+        .setStyle(ButtonStyle.Danger)
+    );
+
+    await ticketChannel.send({
+      content: `<@${interaction.user.id}> ${supportRoleIds.map((id) => `<@&${id}>`).join(" ")}`.trim(),
+      embeds: [embed],
+      components: [controls],
+    });
+
+    await sendLog(
+      interaction.guild,
+      "فتح تذكرة",
+      `تم فتح التذكرة <#${ticketChannel.id}> بواسطة <@${interaction.user.id}>`,
+      botConfig.embeds.colors.ticket?.open || "#57F287"
+    );
+
+    return interaction.reply({ content: `تم إنشاء تذكرتك: <#${ticketChannel.id}>`, ephemeral: true });
   }
-  return result;
-}
 
-export function getRandomColor() {
-  const colors = Object.values(botConfig.embeds.colors).flatMap((color) =>
-    typeof color === "string" ? color : Object.values(color),
-  );
-  return colors[Math.floor(Math.random() * colors.length)];
-}
+  if (interaction.customId === "claim_ticket") {
+    if (!hasStaffPerm(interaction.member, botConfig.tickets?.supportRoles)) {
+      return interaction.reply({ content: botConfig.messages?.noPermission || "ما عندك صلاحية.", ephemeral: true });
+    }
+    await interaction.reply({ content: `تم استلام التذكرة بواسطة <@${interaction.user.id}>.` });
+  }
 
-export default botConfig;
+  if (interaction.customId === "close_ticket") {
+    if (!hasStaffPerm(interaction.member, botConfig.tickets?.supportRoles)) {
+      return interaction.reply({ content: botConfig.messages?.noPermission || "ما عندك صلاحية.", ephemeral: true });
+    }
+    await interaction.reply({ content: "سيتم إغلاق التذكرة خلال 3 ثوانٍ..." });
+    await sendLog(
+      interaction.guild,
+      "إغلاق تذكرة",
+      `تم إغلاق التذكرة **${interaction.channel.name}** بواسطة <@${interaction.user.id}>`,
+      botConfig.embeds.colors.ticket?.closed || "#ED4245"
+    );
+    setTimeout(() => {
+      interaction.channel.delete().catch(() => {});
+    }, 3000);
+  }
+});
+
+client.once("ready", async () => {
+  console.log(`Logged in as ${client.user.tag}`);
+
+  const token = process.env.DISCORD_TOKEN || process.env.TOKEN;
+  const clientId = process.env.CLIENT_ID || client.user.id;
+  if (!token || !clientId) return;
+
+  try {
+    const rest = new REST({ version: "10" }).setToken(token);
+    if (process.env.GUILD_ID) {
+      await rest.put(
+        Routes.applicationGuildCommands(clientId, process.env.GUILD_ID),
+        { body: slashCommands }
+      );
+      console.log("Registered guild slash commands.");
+    } else {
+      await rest.put(Routes.applicationCommands(clientId), { body: slashCommands });
+      console.log("Registered global slash commands.");
+    }
+  } catch (err) {
+    console.error("Failed to register slash commands:", err);
+  }
+});
+
+const token = process.env.DISCORD_TOKEN || process.env.TOKEN;
+client.login(token);

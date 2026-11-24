@@ -12,7 +12,7 @@ import {
   REST,
   Routes,
 } from "discord.js";
-import { botConfig, getColor, isFeatureEnabled } from "./config.js";
+import { botConfig, getColor, isFeatureEnabled } from "./config/bot.js";
 
 const client = new Client({
   intents: [

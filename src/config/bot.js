@@ -1,5 +1,6 @@
 export const botConfig = {
   commands: { prefix: "!" },
+  maintenance: false,
   presence: {
     status: "online",
     activities: [{ name: "Titan Bot", type: 0 }],
@@ -29,6 +30,18 @@ export function isBotOwner(userId) {
     ? process.env.BOT_OWNERS.split(",").map((id) => id.trim())
     : [];
   return owners.includes(String(userId));
+}
+
+export function isMaintenanceMode() {
+  return Boolean(botConfig.maintenance);
+}
+
+export function isCommandCategoryEnabled(categoryName) {
+  return true;
+}
+
+export function getApplicationStatusColor(status) {
+  return "#336699";
 }
 
 export function getBotMessage(key, fallback = "") {

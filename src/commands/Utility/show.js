@@ -1,4 +1,4 @@
-import { EmbedBuilder } from "discord.js";
+import { EmbedBuilder, SlashCommandBuilder } from "discord.js";
 import { getCommandPrefix } from "../../config/bot.js";
 
 const ARABIC_COMMAND_EXAMPLES = [
@@ -9,17 +9,22 @@ const ARABIC_COMMAND_EXAMPLES = [
 ];
 
 export default {
+  data: new SlashCommandBuilder()
+    .setName("show")
+    .setDescription("يعرض قائمة بأوامر البوت وأمثلة استخدامها"),
   name: "show",
   aliases: ["اظهار", "إظهار", "الاوامر", "الأوامر"],
   description: "يعرض قائمة بأوامر البوت وأمثلة استخدامها",
-  async execute(message, args, client) {
-    const prefix = getCommandPrefix(message.guild?.id) || "!";
-    const commandsCollection = client.commands || new Map();
+  async execute(messageOrInteraction, args, client) {
+    const isInteraction = Boolean(messageOrInteraction.isChatInputCommand?.());
+    const guildId = messageOrInteraction.guild?.id;
+    const prefix = getCommandPrefix(guildId) || "!";
+    const commandsCollection = client?.commands || messageOrInteraction.client?.commands || new Map();
 
     // تجميع أسماء الأوامر المحمّلة بدون تكرار
     const uniqueNames = new Set();
     for (const [key, cmd] of commandsCollection.entries()) {
-      const realName = cmd?.name || key;
+      const realName = cmd?.name || cmd?.data?.name || key;
       if (realName) uniqueNames.add(realName);
     }
 
@@ -36,7 +41,7 @@ export default {
         ? loadedCommandsList.map((name) => `\`${prefix}${name}\``).join(", ")
         : "لا توجد أوامر محمّلة حالياً";
 
-    // تقسيم القائمة إذا كانت طويلة حتى لا تتجاوز حد Discord Embed (4096 حرف)
+    // تقسيم القائمة إذا كانت طويلة حتى لا تتجاوز حد Discord Embed
     const maxFieldLength = 950;
     const chunks = [];
     let currentChunk = "";
@@ -70,6 +75,9 @@ export default {
       });
     });
 
-    return message.reply({ embeds: [embed] });
+    if (isInteraction) {
+      return messageOrInteraction.reply({ embeds: [embed] });
+    }
+    return messageOrInteraction.reply({ embeds: [embed] });
   },
 };

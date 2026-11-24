@@ -20,3 +20,9 @@ export function getColor(color) {
 export function isFeatureEnabled(featureName) {
   return Boolean(botConfig.features?.[featureName]);
 }
+
+export function validateConfig() {
+  return true;
+}
+
+export default botConfig;

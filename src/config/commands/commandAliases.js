@@ -8,6 +8,12 @@ export const commandAliases = {
     'money': 'balance',
     'cash': 'balance',
 
+    'اظهار': 'show',
+    'إظهار': 'show',
+    'الاوامر': 'show',
+    'الأوامر': 'show',
+    'show': 'show',
+
     'dep': 'deposit',
     'with': 'withdraw',
     'work': 'work',

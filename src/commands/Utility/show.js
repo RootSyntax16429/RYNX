@@ -2,185 +2,156 @@ import { EmbedBuilder, SlashCommandBuilder } from "discord.js";
 import { getCommandPrefix } from "../../config/bot.js";
 import { commandAliases } from "../../config/commands/commandAliases.js";
 
-// اختصارات عربية خفيفة من كلمة واحدة + عكس الأمر يبدأ بـ (لا)
-export const ARABIC_SYSTEM_COMMANDS = {
-  // الإدارة والسيستم
-  "app-admin": "تقديمات",
-  apply: "تقديم",
-  autorole: "تلقائي",
-  autoverify: "تلقائي",
+// أوامر السيستم والتذاكر والإشراف والترحيب فقط (كلمة واحدة + عكسها بـ "لا")
+export const CORE_SYSTEM_COMMANDS = {
+  // الإشراف والمودريشن
   ban: "باند",
   unban: "لاباند",
+  kick: "طرد",
+  massban: "باندات",
+  masskick: "طردات",
+  timeout: "تايم",
+  untimeout: "لاتايم",
+  lock: "قفل",
+  unlock: "لاقفل",
+  purge: "مسح",
+  warn: "تحذير",
+  warnings: "تحذيرات",
   cases: "قضايا",
+  usernotes: "ملاحظات",
+
+  // التذاكر والدعم والتقديم
+  ticket: "تذاكر",
   close: "اغلاق",
-  commands: "اوامر",
-  configwizard: "اعداد",
-  count: "عداد",
-  countdown: "مؤقت",
-  dm: "خاص",
-  economy: "اقتصاد",
-  eleaderboard: "اغنياء",
-  embedbuilder: "ايمبد",
-  firstmsg: "اول",
+  support: "دعم",
+  apply: "تقديم",
+  "app-admin": "تقديمات",
+
+  // الترحيب والوداع والتحقق والرتب
+  welcome: "ترحيب",
   goodbye: "وداع",
   greet: "استقبال",
+  autorole: "تلقائي",
+  verify: "تحقق",
+  autoverify: "تحققات",
+  verification: "إدارة_التحقق",
+  reactroles: "رتب",
   jointocreate: "رومات",
-  kick: "طرد",
-  leaderboard: "توب",
+
+  // السيستم والإعدادات والمعلومات
+  show: "اظهار",
+  commands: "اوامر",
+  help: "مساعدة",
+  ping: "بنق",
+  configwizard: "اعداد",
+  logging: "سجلات",
+  serverinfo: "سيرفر",
+  serverstats: "احصائيات",
+  userinfo: "معلومات",
+  avatar: "افتار",
+  say: "قول",
+  dm: "خاص",
+  embedbuilder: "ايمبد",
+  poll: "تصويت",
+  report: "بلاغ",
+  priority: "اولوية",
+  count: "عداد",
+  countdown: "مؤقت",
+  firstmsg: "اول",
+  stats: "حالة",
+  uptime: "مدة",
+  wipedata: "تصفير",
   level: "لفل",
   leveladd: "زود",
   levelremove: "نقص",
   levelset: "ضبط",
-  lock: "قفل",
-  unlock: "لاقفل",
-  logging: "سجلات",
-  massban: "باندات",
-  masskick: "طردات",
-  ping: "بنق",
-  poll: "تصويت",
-  priority: "اولوية",
-  purge: "مسح",
-  reactroles: "رتب",
-  report: "بلاغ",
-  say: "قول",
-  serverinfo: "سيرفر",
-  serverstats: "احصائيات",
-  support: "دعم",
-  ticket: "تذاكر",
-  timeout: "تايم",
-  untimeout: "لاتايم",
-  uptime: "مدة",
-  userinfo: "معلومات",
-  usernotes: "ملاحظات",
-  verification: "تحققات",
-  verify: "تحقق",
-  warn: "تحذير",
-  warnings: "تحذيرات",
-  welcome: "ترحيب",
-  wipedata: "تصفير",
-
-  // العامة والألعاب والاقتصاد والصوت
-  avatar: "افتار",
-  balance: "رصيد",
-  baseconvert: "تحويل",
-  beg: "تسول",
-  birthday: "ميلاد",
-  buy: "شراء",
-  calculate: "احسب",
-  claim: "استلام",
-  crime: "جريمة",
-  daily: "يومية",
-  deposit: "ايداع",
-  fight: "قتال",
-  fish: "صيد",
-  flip: "عملة",
-  gamble: "رهان",
-  gcreate: "قيفاواي",
-  gdelete: "حذف",
-  gend: "انهاء",
-  generatepassword: "باسورد",
-  greroll: "سحب",
-  help: "مساعدة",
-  hexcolor: "لون",
-  inventory: "حقيبة",
-  join: "ادخل",
-  mine: "تعدين",
-  music: "موسيقى",
-  nowplaying: "يشتغل",
-  pay: "تحويل",
-  play: "شغل",
-  queue: "قائمة",
-  randomuser: "عشوائي",
   rank: "رتبة",
-  rob: "سرقة",
-  roll: "نرد",
-  search: "بحث",
-  shop: "متجر",
-  "shop-config": "متاجر",
-  shorten: "اختصار",
-  show: "اظهار",
-  stats: "حالة",
-  time: "وقت",
-  todo: "مهام",
-  unixtime: "يونكس",
-  weather: "طقس",
-  withdraw: "سحب",
-  work: "وظيفة",
+  leaderboard: "توب",
 };
+
+// قائمة الأوامر المسموح ظهورها (السيستم + التذاكر + الإشراف + الترحيب) واستبعاد الباقي
+const ALLOWED_ARABIC_SET = new Set([
+  ...Object.values(CORE_SYSTEM_COMMANDS),
+  "اظهار",
+  "إظهار",
+  "اوامر",
+  "الاوامر",
+  "الأوامر",
+]);
 
 const ARABIC_REGEX = /[\u0600-\u06FF]/;
 
 export default {
   data: new SlashCommandBuilder()
     .setName("show")
-    .setDescription("يعرض جميع أوامر البوت العربية المختصرة"),
+    .setDescription("يعرض أوامر السيستم والتذاكر والإشراف والترحيب كاملة"),
   name: "show",
-  aliases: ["اظهار", "إظهار", "الاوامر", "الأوامر"],
-  description: "يعرض جميع أوامر البوت العربية المختصرة",
+  aliases: ["اظهار", "إظهار", "الاوامر", "الأوامر", "اوامر"],
+  description: "يعرض أوامر السيستم والتذاكر والإشراف والترحيب كاملة",
   async execute(messageOrInteraction, args, client) {
     const guildId = messageOrInteraction.guild?.id;
     const prefix = getCommandPrefix(guildId) || "!";
     const commandsCollection =
       client?.commands || messageOrInteraction.client?.commands || new Map();
 
-    const arabicCommandsSet = new Set();
+    const finalCommandsSet = new Set();
 
-    // 1. الأسماء العربية المربوطة في commandAliases
+    // 1. إضافة أوامر السيستم والتذاكر والإشراف والترحيب الأساسية
+    for (const arabicName of Object.values(CORE_SYSTEM_COMMANDS)) {
+      finalCommandsSet.add(arabicName);
+    }
+
+    // 2. إضافة أي اختصارات عربية موجودة في commandAliases إذا كانت ضمن المسموح
     for (const [alias, targetCmd] of Object.entries(commandAliases || {})) {
-      if (ARABIC_REGEX.test(alias) && targetCmd) {
-        arabicCommandsSet.add(alias.trim());
+      const cleanAlias = String(alias).trim();
+      if (ARABIC_REGEX.test(cleanAlias) && ALLOWED_ARABIC_SET.has(cleanAlias) && targetCmd) {
+        finalCommandsSet.add(cleanAlias);
       }
     }
 
-    // 2. الأسماء العربية المختصرة للأوامر المحمّلة
+    // 3. إضافة أي أمر عربي محمّل ضمن المسموح
     for (const [key, cmd] of commandsCollection.entries()) {
       const baseName = String(cmd?.name || cmd?.data?.name || key).toLowerCase();
-
-      if (ARABIC_REGEX.test(baseName)) {
-        arabicCommandsSet.add(baseName);
-      }
-
-      if (ARABIC_SYSTEM_COMMANDS[baseName]) {
-        arabicCommandsSet.add(ARABIC_SYSTEM_COMMANDS[baseName]);
+      const mapped = CORE_SYSTEM_COMMANDS[baseName];
+      if (mapped) {
+        finalCommandsSet.add(mapped);
       }
     }
 
-    const sortedArabicCommands = Array.from(arabicCommandsSet).sort((a, b) =>
+    const sortedCommands = Array.from(finalCommandsSet).sort((a, b) =>
       a.localeCompare(b, "ar")
     );
 
-    const formattedList = sortedArabicCommands.map((cmdName) => `\`${prefix}${cmdName}\``);
+    // صياغة كل أمر بدون مسافات داخلية لتجنب انقسامه في السطر
+    const formattedItems = sortedCommands.map((cmdName) => `\`${prefix}${cmdName}\``);
 
-    const maxFieldLength = 950;
+    // تقسيم الحقول بحيث لا يقطع أي عنصر وبحد أقصى 1000 حرف لكل حقل
+    const maxFieldLength = 1000;
     const chunks = [];
     let currentChunk = "";
 
-    for (const item of formattedList) {
-      const addition = currentChunk ? `، ${item}` : item;
-      if ((currentChunk + addition).length > maxFieldLength) {
+    for (const item of formattedItems) {
+      const separator = currentChunk ? " ، " : "";
+      if ((currentChunk + separator + item).length > maxFieldLength) {
         chunks.push(currentChunk);
         currentChunk = item;
       } else {
-        currentChunk += addition;
+        currentChunk += separator + item;
       }
     }
     if (currentChunk) chunks.push(currentChunk);
 
     const embed = new EmbedBuilder()
       .setColor("#336699")
-      .setTitle(`📋 أوامر البوت (${sortedArabicCommands.length} أمر)`);
+      .setTitle(`📋 أوامر البوت — سيستم، تذاكر، إشراف، ترحيب (${sortedCommands.length} أمر)`);
 
-    if (chunks.length === 0) {
-      embed.setDescription("لا توجد أوامر متوفرة حالياً.");
-    } else {
-      chunks.forEach((chunk, index) => {
-        embed.addFields({
-          name: index === 0 ? "الأوامر" : `تكملة الأوامر (${index + 1})`,
-          value: chunk,
-          inline: false,
-        });
+    chunks.forEach((chunk, index) => {
+      embed.addFields({
+        name: index === 0 ? "الأوامر الكاملة" : `تكملة الأوامر (${index + 1})`,
+        value: chunk,
+        inline: false,
       });
-    }
+    });
 
     return messageOrInteraction.reply({ embeds: [embed] });
   },

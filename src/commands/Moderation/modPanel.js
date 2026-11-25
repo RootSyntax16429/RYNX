@@ -16,7 +16,6 @@ import { getCommandPrefix } from "../../config/bot.js";
 
 const jailConfigs = new Map();
 const warnsStore = new Map();
-// حفظ صارم لرولات كل مسجون: key = `${guildId}_${userId}` -> { roles: [...], durationMs, expiresAt, reason, by, timer }
 const jailedRolesBackup = new Map();
 
 const DEFAULT_JAIL_CONFIG = {
@@ -26,7 +25,7 @@ const DEFAULT_JAIL_CONFIG = {
   allowedRoles: [],
   reasons: [],
   autoJailEnabled: true,
-  autoJailDuration: "10m", // 0 أو دائم = بدون مؤقت تلقائي
+  autoJailDuration: "10m",
   autoJailWords: [],
   jailedUsers: {},
 };
@@ -221,14 +220,21 @@ async function ensureJailSetup(guild, config) {
   return { jailRole, jailChannel };
 }
 
-async function applyJailWithSavedRoles(guild, targetMember, config, reason, executorId, durationMs = 0, notifyChannel = null) {
+async function applyJailWithSavedRoles(
+  guild,
+  targetMember,
+  config,
+  reason,
+  executorId,
+  durationMs = 0,
+  notifyChannel = null
+) {
   const { jailRole, jailChannel } = await ensureJailSetup(guild, config);
   const freshMember = await guild.members.fetch(targetMember.id).catch(() => targetMember);
 
   const backupKey = `${guild.id}_${freshMember.id}`;
   const existingBackup = jailedRolesBackup.get(backupKey);
 
-  // إذا كان العضو مسجون مسبقاً، نحتفظ بالرولات الأصلية الأولى عشان ما تروح لو انسجن مرتين قبل الفك
   const rolesToSave = existingBackup?.roles?.length
     ? existingBackup.roles
     : freshMember.roles.cache
@@ -262,7 +268,13 @@ async function applyJailWithSavedRoles(guild, targetMember, config, reason, exec
   let timer = null;
   if (durationMs && durationMs > 0) {
     timer = setTimeout(async () => {
-      await releaseMemberFromJail(guild, freshMember.id, config, "انتهاء مدة السجن التلقائي", notifyChannel || jailChannel).catch(() => {});
+      await releaseMemberFromJail(
+        guild,
+        freshMember.id,
+        config,
+        "انتهاء مدة السجن التلقائي",
+        notifyChannel || jailChannel
+      ).catch(() => {});
     }, durationMs);
   }
 
@@ -274,7 +286,13 @@ async function applyJailWithSavedRoles(guild, targetMember, config, reason, exec
   return { jailRole, jailChannel, savedRolesCount: rolesToSave.length };
 }
 
-export async function releaseMemberFromJail(guild, userId, config, releaseReason = "فك السجن", notifyChannel = null) {
+export async function releaseMemberFromJail(
+  guild,
+  userId,
+  config,
+  releaseReason = "فك السجن",
+  notifyChannel = null
+) {
   const backupKey = `${guild.id}_${userId}`;
   const backup = jailedRolesBackup.get(backupKey);
   const savedFromConfig = config.jailedUsers?.[userId];
@@ -283,9 +301,7 @@ export async function releaseMemberFromJail(guild, userId, config, releaseReason
     clearTimeout(backup.timer);
   }
 
-  const rolesToRestore = backup?.roles?.length
-    ? backup.roles
-    : savedFromConfig?.roles || [];
+  const rolesToRestore = backup?.roles?.length ? backup.roles : savedFromConfig?.roles || [];
 
   const { jailRole, jailChannel } = await ensureJailSetup(guild, config);
   const member = await guild.members.fetch(userId).catch(() => null);
@@ -334,9 +350,7 @@ export function buildJailSetupPanel(guild, prefix) {
   const jailChannelText = config.jailChannelId
     ? `<#${config.jailChannelId}>`
     : "غير محدد (يُنشأ تلقائياً)";
-  const jailRoleText = config.jailRoleId
-    ? `<@&${config.jailRoleId}>`
-    : "غير محدد (تُنشأ تلقائياً)";
+  const jailRoleText = config.jailRoleId ? `<@&${config.jailRoleId}>` : "غير محدد (تُنشأ تلقائياً)";
   const allowedRolesText =
     config.allowedRoles.length > 0
       ? config.allowedRoles.map((id) => `<@&${id}>`).join(" ، ")
@@ -442,7 +456,6 @@ export async function handleAutoJailMessage(message) {
   const member = message.member;
   if (!member) return false;
 
-  // استثناء أصحاب صلاحية الإدارة أو الرولات المسموح لها بالسجن
   if (
     member.permissions?.has(PermissionsBitField.Flags.Administrator) ||
     member.permissions?.has(PermissionsBitField.Flags.ModerateMembers) ||
@@ -935,7 +948,8 @@ export async function handleJailInteraction(interaction) {
         const parsed = parseDurationToMs(rawDuration);
         if (parsed === null) {
           await interaction.reply({
-            content: "❌ صيغة المدة غير صحيحة. اكتب مثل `30s` أو `10m` أو `2h` أو `1d` أو `دائم`.",
+            content:
+              "❌ صيغة المدة غير صحيحة. اكتب مثل `30s` أو `10m` أو `2h` أو `1d` أو `دائم`.",
             ephemeral: true,
           });
           return true;

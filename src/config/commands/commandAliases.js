@@ -1,12 +1,13 @@
 export const commandAliases = {
-  // لوحة أوامر سنيفر
+  // لوحة سنيفر
   "اوامر_سنيفر": "show",
+  "اوامر سنيفر": "show",
   "اظهار": "show",
   "إظهار": "show",
   "اوامر": "show",
   "الاوامر": "show",
 
-  // أوامر الإشراف ونظام السجن
+  // الإشراف ونظام السجن
   "اشراف": "modpanel",
   "الاشراف": "modpanel",
   "مسح": "modpanel",
@@ -34,22 +35,28 @@ export const commandAliases = {
   "فك_سجن": "modpanel",
   "افراج": "modpanel",
 
-  // التذاكر والترحيب
-  "تذاكر": "ticket",
+  // التذاكر
+  "انشاء_تذكره": "create_ticket",
+  "انشاء_تذكرة": "create_ticket",
+  "تذكره": "create_ticket",
+  "تذكرة": "create_ticket",
+  "تذاكر": "create_ticket",
   "اغلاق": "close",
+
+  // الترحيب والرولات
   "ترحيب": "welcome",
   "وداع": "goodbye",
   "تلقائي": "autorole",
 };
 
 export function resolveCommandAlias(name = "") {
-  const clean = String(name).trim().toLowerCase();
-  const rawClean = String(name).trim();
-  return commandAliases[rawClean] || commandAliases[clean] || clean;
+  const raw = String(name).trim();
+  const lower = raw.toLowerCase();
+  return commandAliases[raw] || commandAliases[lower] || lower;
 }
 
 export function resolveSubcommandAlias(subcommand = "") {
-  const clean = String(subcommand).trim().toLowerCase();
-  const rawClean = String(subcommand).trim();
-  return commandAliases[rawClean] || commandAliases[clean] || clean;
+  const raw = String(subcommand).trim();
+  const lower = raw.toLowerCase();
+  return commandAliases[raw] || commandAliases[lower] || lower;
 }

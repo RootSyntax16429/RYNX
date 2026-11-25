@@ -9,7 +9,7 @@ export const commandAliases = {
     'الاشراف': 'modpanel',
     'مسح': 'modpanel',
     'كتم': 'modpanel',
-    'فك_كتم': 'modpanel',
+    'تكلم': 'modpanel',
     'باند': 'modpanel',
     'لاباند': 'modpanel',
     'طرد': 'modpanel',
@@ -18,11 +18,11 @@ export const commandAliases = {
     'تحذير': 'modpanel',
     'تحذيرات': 'modpanel',
     'قفل': 'modpanel',
-    'لاقفل': 'modpanel',
+    'فتح': 'modpanel',
     'سجن': 'modpanel',
-    'اوامر_سجن': 'modpanel',
+    'السجن': 'modpanel',
     'سجن_اعداد': 'modpanel',
-    'فك_سجن': 'modpanel',
+    '': 'modpanel',
     'افراج': 'modpanel',
 
 };

@@ -176,28 +176,18 @@ async function ensureJailSetup(guild, config) {
       reason: "إنشاء روم السجن تلقائياً بواسطة سنيفر",
     });
   } else {
-    await jailChannel.permissionOverwrites.edit(guild.roles.everyone.id, {
-      ViewChannel: false,
-    });
-    await jailChannel.permissionOverwrites.edit(jailRole.id, {
-      ViewChannel: true,
-      SendMessages: true,
-      ReadMessageHistory: true,
-    });
+    await jailChannel.permissionOverwrites
+      .edit(guild.roles.everyone.id, { ViewChannel: false })
+      .catch(() => {});
+    await jailChannel.permissionOverwrites
+      .edit(jailRole.id, {
+        ViewChannel: true,
+        SendMessages: true,
+        ReadMessageHistory: true,
+      })
+      .catch(() => {});
   }
   config.jailChannelId = jailChannel.id;
-
-  for (const [, ch] of guild.channels.cache) {
-    if (ch.id !== jailChannel.id && ch.permissionOverwrites) {
-      await ch.permissionOverwrites
-        .edit(jailRole.id, {
-          ViewChannel: false,
-          SendMessages: false,
-          Connect: false,
-        })
-        .catch(() => {});
-    }
-  }
 
   return { jailRole, jailChannel };
 }
@@ -285,8 +275,8 @@ export function buildModerationGuideEmbed(prefix) {
       value: [
         `• \`${prefix}مسح [عدد]\` — مسح رسائل الروم`,
         `• \`${prefix}كتم @منشن [سبب]\` أو \`اسكت @منشن\` / \`${prefix}تكلم @منشن\` — كتم وفك الكتم`,
-        `• \`${prefix}باند @منشن [سبب]\` / \`${prefix}لاباند [آيدي]\` — باند وفك الباند`,
-        `• \`${prefix}طرد @منشن [سبب]\` — طرد عضو من السيرفر`,
+        `• \`${prefix}باند @منشن [سبب]\` أو \`تف @منشن\` / \`${prefix}لاباند [آيدي]\` — باند وفك الباند`,
+        `• \`${prefix}طرد @منشن [سبب]\` أو \`بنعالي @منشن\` — طرد عضو من السيرفر`,
         `• \`${prefix}تايم @منشن [مدة مثل 10m] [سبب]\` / \`${prefix}لاتايم @منشن\` — تايم آوت وفكه`,
         `• \`${prefix}تحذير @منشن [سبب]\` / \`${prefix}تحذيرات @منشن\` — تحذير وعرض التحذيرات`,
         `• \`${prefix}قفل\` / \`${prefix}فتح\` — قفل وفتح الروم الحالي`,
@@ -614,101 +604,110 @@ export async function handleJailInteraction(interaction) {
   const config = getJailConfig(guild.id);
   const prefix = getCommandPrefix(guild.id) || "!";
 
-  if (interaction.isButton()) {
-    if (interaction.customId === "jail_setup_auto") {
-      await interaction.deferUpdate();
-      await ensureJailSetup(guild, config);
-      await interaction.editReply(buildJailSetupPanel(guild, prefix));
-      return true;
-    }
-
-    if (interaction.customId === "jail_add_reason") {
-      const modal = new ModalBuilder()
-        .setCustomId("jail_modal_add_reason")
-        .setTitle("إضافة سبب جديد للسجن");
-
-      const input = new TextInputBuilder()
-        .setCustomId("jail_reason_text")
-        .setLabel("اكتب السبب")
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true)
-        .setMaxLength(100);
-
-      modal.addComponents(new ActionRowBuilder().addComponents(input));
-      await interaction.showModal(modal);
-      return true;
-    }
-
-    if (interaction.customId === "jail_clear_reasons") {
-      config.reasons = [];
-      await interaction.update(buildJailSetupPanel(guild, prefix));
-      return true;
-    }
-  }
-
-  if (interaction.isModalSubmit() && interaction.customId === "jail_modal_add_reason") {
-    const newReason = interaction.fields.getTextInputValue("jail_reason_text").trim();
-    if (newReason) {
-      config.reasons.push(newReason);
-    }
-    await interaction.update(buildJailSetupPanel(guild, prefix));
-    return true;
-  }
-
-  if (interaction.isStringSelectMenu()) {
-    if (interaction.customId === "jail_select_allowed_roles") {
-      config.allowedRoles = interaction.values;
-      await interaction.update(buildJailSetupPanel(guild, prefix));
-      return true;
-    }
-
-    if (interaction.customId.startsWith("jail_pick_reason_")) {
-      const parts = interaction.customId.replace("jail_pick_reason_", "").split("_");
-      const targetUserId = parts[0];
-      const executorId = parts[1];
-
-      if (interaction.user.id !== executorId) {
-        await interaction.reply({
-          content: "❌ هذه القائمة خاصة بالشخص الذي بدأ أمر السجن فقط.",
-          ephemeral: true,
-        });
+  try {
+    if (interaction.isButton()) {
+      if (interaction.customId === "jail_setup_auto") {
+        await interaction.deferUpdate();
+        await ensureJailSetup(guild, config);
+        await interaction.editReply(buildJailSetupPanel(guild, prefix));
         return true;
       }
 
-      const selectedVal = interaction.values[0];
-      if (selectedVal === "custom_reason") {
+      if (interaction.customId === "jail_add_reason") {
         const modal = new ModalBuilder()
-          .setCustomId(`jail_modal_custom_${targetUserId}`)
-          .setTitle("كتابة سبب السجن");
+          .setCustomId("jail_modal_add_reason")
+          .setTitle("إضافة سبب جديد للسجن");
 
         const input = new TextInputBuilder()
-          .setCustomId("custom_reason_input")
-          .setLabel("سبب السجن")
-          .setStyle(TextInputStyle.Paragraph)
+          .setCustomId("jail_reason_text")
+          .setLabel("اكتب السبب")
+          .setStyle(TextInputStyle.Short)
           .setRequired(true)
-          .setMaxLength(300);
+          .setMaxLength(100);
 
         modal.addComponents(new ActionRowBuilder().addComponents(input));
         await interaction.showModal(modal);
         return true;
       }
 
-      const reasonIndex = Number(selectedVal.replace("reason_", ""));
-      const chosenReason = config.reasons[reasonIndex];
-      if (!chosenReason) {
-        await interaction.reply({ content: "❌ هذا السبب غير متوفر.", ephemeral: true });
+      if (interaction.customId === "jail_clear_reasons") {
+        config.reasons = [];
+        await interaction.update(buildJailSetupPanel(guild, prefix));
+        return true;
+      }
+    }
+
+    if (interaction.isModalSubmit() && interaction.customId === "jail_modal_add_reason") {
+      const newReason = interaction.fields.getTextInputValue("jail_reason_text").trim();
+      if (newReason) {
+        config.reasons.push(newReason);
+      }
+      await interaction.update(buildJailSetupPanel(guild, prefix));
+      return true;
+    }
+
+    if (interaction.isStringSelectMenu()) {
+      if (interaction.customId === "jail_select_allowed_roles") {
+        config.allowedRoles = interaction.values;
+        await interaction.update(buildJailSetupPanel(guild, prefix));
         return true;
       }
 
-      await executeJailOnMember(interaction, guild, targetUserId, chosenReason, config);
+      if (interaction.customId.startsWith("jail_pick_reason_")) {
+        const parts = interaction.customId.replace("jail_pick_reason_", "").split("_");
+        const targetUserId = parts[0];
+        const executorId = parts[1];
+
+        if (interaction.user.id !== executorId) {
+          await interaction.reply({
+            content: "❌ هذه القائمة خاصة بالشخص الذي بدأ أمر السجن فقط.",
+            ephemeral: true,
+          });
+          return true;
+        }
+
+        const selectedVal = interaction.values[0];
+        if (selectedVal === "custom_reason") {
+          const modal = new ModalBuilder()
+            .setCustomId(`jail_modal_custom_${targetUserId}`)
+            .setTitle("كتابة سبب السجن");
+
+          const input = new TextInputBuilder()
+            .setCustomId("custom_reason_input")
+            .setLabel("سبب السجن")
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(true)
+            .setMaxLength(300);
+
+          modal.addComponents(new ActionRowBuilder().addComponents(input));
+          await interaction.showModal(modal);
+          return true;
+        }
+
+        const reasonIndex = Number(selectedVal.replace("reason_", ""));
+        const chosenReason = config.reasons[reasonIndex];
+        if (!chosenReason) {
+          await interaction.reply({ content: "❌ هذا السبب غير متوفر.", ephemeral: true });
+          return true;
+        }
+
+        await executeJailOnMember(interaction, guild, targetUserId, chosenReason, config);
+        return true;
+      }
+    }
+
+    if (interaction.isModalSubmit() && interaction.customId.startsWith("jail_modal_custom_")) {
+      const targetUserId = interaction.customId.replace("jail_modal_custom_", "");
+      const customReason = interaction.fields.getTextInputValue("custom_reason_input").trim();
+      await executeJailOnMember(interaction, guild, targetUserId, customReason, config);
       return true;
     }
-  }
-
-  if (interaction.isModalSubmit() && interaction.customId.startsWith("jail_modal_custom_")) {
-    const targetUserId = interaction.customId.replace("jail_modal_custom_", "");
-    const customReason = interaction.fields.getTextInputValue("custom_reason_input").trim();
-    await executeJailOnMember(interaction, guild, targetUserId, customReason, config);
+  } catch (err) {
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction
+        .reply({ content: "❌ حصل خطأ أثناء تنفيذ العملية.", ephemeral: true })
+        .catch(() => {});
+    }
     return true;
   }
 

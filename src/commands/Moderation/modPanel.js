@@ -15,7 +15,7 @@ import {
 import { getCommandPrefix } from "../../config/bot.js";
 
 const jailConfigs = new Map();
-const warnsStore = new Map(); // { guildId_userId: [ { reason, by, at } ] }
+const warnsStore = new Map();
 
 const DEFAULT_JAIL_CONFIG = {
   jailChannelId: null,
@@ -36,6 +36,15 @@ export function getJailConfig(guildId) {
     });
   }
   return jailConfigs.get(guildId);
+}
+
+function normalizeArabicCommand(word = "") {
+  return String(word)
+    .trim()
+    .replace(/^[!$]+/, "")
+    .replace(/[إأآا]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه");
 }
 
 function addWarning(guildId, userId, reason, moderatorId) {
@@ -69,6 +78,30 @@ function parseDurationToMs(input) {
   if (unit === "m" || unit === "د") return amount * 60 * 1000;
   if (unit === "h" || unit === "س") return amount * 60 * 60 * 1000;
   if (unit === "d" || unit === "ي") return amount * 24 * 60 * 60 * 1000;
+  return null;
+}
+
+async function resolveTargetUser(messageOrInteraction, args = []) {
+  const mentioned = messageOrInteraction.mentions?.users?.first();
+  if (mentioned) return mentioned;
+
+  if (messageOrInteraction.reference?.messageId) {
+    const repliedMsg = await messageOrInteraction.channel.messages
+      .fetch(messageOrInteraction.reference.messageId)
+      .catch(() => null);
+    if (repliedMsg?.author && !repliedMsg.author.bot) {
+      return repliedMsg.author;
+    }
+  }
+
+  for (const arg of args) {
+    const cleanId = String(arg || "").replace(/[<@!>]/g, "").trim();
+    if (/^\d{17,20}$/.test(cleanId)) {
+      const fetched = await messageOrInteraction.client.users.fetch(cleanId).catch(() => null);
+      if (fetched) return fetched;
+    }
+  }
+
   return null;
 }
 
@@ -251,54 +284,76 @@ export function buildModerationGuideEmbed(prefix) {
       name: "🔨 العقوبات والإدارة",
       value: [
         `• \`${prefix}مسح [عدد]\` — مسح رسائل الروم`,
-        `• \`${prefix}كتم @منشن [سبب]\` / \`${prefix}فك_كتم @منشن\` — كتم وفك الكتم`,
+        `• \`${prefix}كتم @منشن [سبب]\` أو \`اسكت @منشن\` / \`${prefix}تكلم @منشن\` — كتم وفك الكتم`,
         `• \`${prefix}باند @منشن [سبب]\` / \`${prefix}لاباند [آيدي]\` — باند وفك الباند`,
         `• \`${prefix}طرد @منشن [سبب]\` — طرد عضو من السيرفر`,
         `• \`${prefix}تايم @منشن [مدة مثل 10m] [سبب]\` / \`${prefix}لاتايم @منشن\` — تايم آوت وفكه`,
         `• \`${prefix}تحذير @منشن [سبب]\` / \`${prefix}تحذيرات @منشن\` — تحذير وعرض التحذيرات`,
-        `• \`${prefix}قفل\` / \`${prefix}لاقفل\` — قفل وفتح الروم الحالي`,
-        `• \`اوامر_سجن\` / \`${prefix}سجن @منشن\` / \`${prefix}فك_سجن @منشن\` — نظام السجن الكامل`,
+        `• \`${prefix}قفل\` / \`${prefix}فتح\` — قفل وفتح الروم الحالي`,
+        `• \`اوامر_سجن\` / \`إعداد_السجن\` / \`${prefix}سجن @منشن\` / \`${prefix}فك_سجن @منشن\` — نظام السجن الكامل`,
       ].join("\n"),
       inline: false,
     });
 }
 
-function canUseModeration(member, guild, commandName) {
+function canUseModeration(member, guild, actionKey) {
   if (!member) return false;
   if (member.permissions?.has(PermissionsBitField.Flags.Administrator)) return true;
 
   const config = getJailConfig(guild.id);
   if (
-    (commandName === "سجن" || commandName === "فك_سجن" || commandName === "افراج") &&
+    ["jail", "unjail"].includes(actionKey) &&
     config.allowedRoles.length > 0 &&
     member.roles?.cache?.some((r) => config.allowedRoles.includes(r.id))
   ) {
     return true;
   }
 
-  switch (commandName) {
-    case "مسح":
-    case "قفل":
-    case "لاقفل":
+  switch (actionKey) {
+    case "purge":
+    case "lock":
+    case "unlock":
       return member.permissions?.has(PermissionsBitField.Flags.ManageChannels);
-    case "كتم":
-    case "فك_كتم":
-    case "تايم":
-    case "لاتايم":
-    case "تحذير":
-    case "تحذيرات":
-    case "سجن":
-    case "فك_سجن":
-    case "افراج":
+    case "mute":
+    case "unmute":
+    case "timeout":
+    case "untimeout":
+    case "warn":
+    case "warnings":
+    case "jail":
+    case "unjail":
       return member.permissions?.has(PermissionsBitField.Flags.ModerateMembers);
-    case "طرد":
+    case "kick":
       return member.permissions?.has(PermissionsBitField.Flags.KickMembers);
-    case "باند":
-    case "لاباند":
+    case "ban":
+    case "unban":
       return member.permissions?.has(PermissionsBitField.Flags.BanMembers);
     default:
       return false;
   }
+}
+
+function mapActionKey(normalizedWord, fallbackArg) {
+  const token = normalizedWord || normalizeArabicCommand(fallbackArg || "");
+  if (["اوامر_سجن", "سجن_اعداد", "اعداد_السجن", "اعداد_سجن"].includes(token)) {
+    return "jail_setup";
+  }
+  if (["سجن", "السجن"].includes(token)) return "jail";
+  if (["فك_سجن", "افراج"].includes(token)) return "unjail";
+  if (["مسح"].includes(token)) return "purge";
+  if (["كتم", "اسكت"].includes(token)) return "mute";
+  if (["تكلم", "فك_كتم", "انبح"].includes(token)) return "unmute";
+  if (["باند", "تف"].includes(token)) return "ban";
+  if (["لاباند"].includes(token)) return "unban";
+  if (["طرد", "بنعالي"].includes(token)) return "kick";
+  if (["تايم"].includes(token)) return "timeout";
+  if (["لاتايم"].includes(token)) return "untimeout";
+  if (["تحذير"].includes(token)) return "warn";
+  if (["تحذيرات"].includes(token)) return "warnings";
+  if (["قفل"].includes(token)) return "lock";
+  if (["فتح", "لاقفل"].includes(token)) return "unlock";
+  if (["اشراف", "الاشراف"].includes(token)) return "guide";
+  return null;
 }
 
 export default {
@@ -311,19 +366,25 @@ export default {
     "الاشراف",
     "مسح",
     "كتم",
-    "فك_كتم",
+    "اسكت",
+    "تكلم",
+    "انبح",
     "باند",
+    "تف",
     "لاباند",
     "طرد",
+    "بنعالي",
     "تايم",
     "لاتايم",
     "تحذير",
     "تحذيرات",
     "قفل",
-    "لاقفل",
+    "فتح",
     "سجن",
+    "السجن",
     "اوامر_سجن",
     "سجن_اعداد",
+    "إعداد_السجن",
     "فك_سجن",
     "افراج",
   ],
@@ -336,17 +397,16 @@ export default {
     const member = messageOrInteraction.member;
     const rawContent = String(messageOrInteraction.content || "").trim();
     const firstToken = rawContent.split(/\s+/)[0] || "";
-    const cmdName =
-      firstToken.replace(new RegExp(`^(\\${prefix}|\\$)?`), "").trim() ||
-      String(args[0] || "").trim();
+    const normalizedFirst = normalizeArabicCommand(firstToken);
+    const actionKey = mapActionKey(normalizedFirst, args[0]);
 
-    if (cmdName === "اشراف" || cmdName === "الاشراف") {
+    if (!actionKey || actionKey === "guide") {
       return messageOrInteraction.reply({ embeds: [buildModerationGuideEmbed(prefix)] });
     }
 
     const config = getJailConfig(guild.id);
 
-    if (cmdName === "اوامر_سجن" || cmdName === "سجن_اعداد") {
+    if (actionKey === "jail_setup") {
       if (!member?.permissions?.has(PermissionsBitField.Flags.Administrator)) {
         return messageOrInteraction.reply({
           content: "❌ هذا الأمر مخصص لإدارة السيرفر فقط.",
@@ -355,14 +415,13 @@ export default {
       return messageOrInteraction.reply(buildJailSetupPanel(guild, prefix));
     }
 
-    if (!canUseModeration(member, guild, cmdName)) {
+    if (!canUseModeration(member, guild, actionKey)) {
       return messageOrInteraction.reply({
         content: "❌ ما عندك صلاحية كافية لاستخدام هذا الأمر.",
       });
     }
 
-    // 1. مسح الرسائل
-    if (cmdName === "مسح") {
+    if (actionKey === "purge") {
       const count = Math.min(100, Math.max(1, Number(args[0]) || 10));
       const deleted = await messageOrInteraction.channel.bulkDelete(count, true).catch(() => null);
       const replyMsg = await messageOrInteraction.reply({
@@ -372,9 +431,8 @@ export default {
       return replyMsg;
     }
 
-    // 2. قفل وفتح الروم
-    if (cmdName === "قفل" || cmdName === "لاقفل") {
-      const isLock = cmdName === "قفل";
+    if (actionKey === "lock" || actionKey === "unlock") {
+      const isLock = actionKey === "lock";
       await messageOrInteraction.channel.permissionOverwrites.edit(guild.roles.everyone.id, {
         SendMessages: !isLock,
       });
@@ -383,8 +441,7 @@ export default {
       });
     }
 
-    // 3. فك باند بالآيدي
-    if (cmdName === "لاباند") {
+    if (actionKey === "unban") {
       const userId = args[0]?.replace(/[<@!>]/g, "");
       if (!userId) {
         return messageOrInteraction.reply({
@@ -397,17 +454,16 @@ export default {
       });
     }
 
-    const targetUser = messageOrInteraction.mentions?.users?.first();
+    const targetUser = await resolveTargetUser(messageOrInteraction, args);
     if (!targetUser) {
       return messageOrInteraction.reply({
-        content: `⚠️ منشن العضو المطلوب، مثال: \`${prefix}${cmdName} @العضو\``,
+        content: `⚠️ منشن العضو أو رد على رسالته، مثال: \`${prefix}سجن @العضو\``,
       });
     }
 
     const targetMember = await guild.members.fetch(targetUser.id).catch(() => null);
 
-    // 4. تحذيرات
-    if (cmdName === "تحذيرات") {
+    if (actionKey === "warnings") {
       const list = getWarnings(guild.id, targetUser.id);
       if (list.length === 0) {
         return messageOrInteraction.reply({
@@ -422,8 +478,7 @@ export default {
       });
     }
 
-    // 5. تحذير
-    if (cmdName === "تحذير") {
+    if (actionKey === "warn") {
       const reason = args.slice(1).join(" ").trim() || "مخالفة القوانين";
       const list = addWarning(guild.id, targetUser.id, reason, messageOrInteraction.author.id);
       return messageOrInteraction.reply({
@@ -431,32 +486,35 @@ export default {
       });
     }
 
-    // 6. كتم وفك كتم
-    if (cmdName === "كتم" || cmdName === "فك_كتم") {
+    if (actionKey === "mute" || actionKey === "unmute") {
       if (!targetMember) {
         return messageOrInteraction.reply({ content: "❌ العضو غير موجود في السيرفر." });
       }
-      const muteRole = await ensureMuteRole(guild, config);
-      if (cmdName === "كتم") {
+      const muteRole = await ensureMuteRole(guild, config).catch(() => null);
+      if (!muteRole) {
+        return messageOrInteraction.reply({
+          content: "❌ ما قدرت أنشئ أو أعدل رتبة الكتم، تأكد من صلاحية Manage Roles للبوت.",
+        });
+      }
+      if (actionKey === "mute") {
         const reason = args.slice(1).join(" ").trim() || "كتم إشرافي";
-        await targetMember.roles.add(muteRole.id, reason);
+        await targetMember.roles.add(muteRole.id, reason).catch(() => null);
         return messageOrInteraction.reply({
           content: `🔇 تم كتم ${targetUser}\n**السبب:** ${reason}`,
         });
       } else {
-        await targetMember.roles.remove(muteRole.id, "فك الكتم");
+        await targetMember.roles.remove(muteRole.id, "فك الكتم").catch(() => null);
         return messageOrInteraction.reply({
           content: `🔊 تم فك الكتم عن ${targetUser}.`,
         });
       }
     }
 
-    // 7. تايم آوت وفك تايم آوت
-    if (cmdName === "تايم" || cmdName === "لاتايم") {
+    if (actionKey === "timeout" || actionKey === "untimeout") {
       if (!targetMember) {
         return messageOrInteraction.reply({ content: "❌ العضو غير موجود في السيرفر." });
       }
-      if (cmdName === "لاتايم") {
+      if (actionKey === "untimeout") {
         await targetMember.timeout(null, "فك التايم آوت");
         return messageOrInteraction.reply({
           content: `✅ تم فك التايم آوت عن ${targetUser}.`,
@@ -470,8 +528,7 @@ export default {
       });
     }
 
-    // 8. طرد
-    if (cmdName === "طرد") {
+    if (actionKey === "kick") {
       if (!targetMember) {
         return messageOrInteraction.reply({ content: "❌ العضو غير موجود في السيرفر." });
       }
@@ -482,8 +539,7 @@ export default {
       });
     }
 
-    // 9. باند
-    if (cmdName === "باند") {
+    if (actionKey === "ban") {
       const reason = args.slice(1).join(" ").trim() || "باند إشرافي";
       await guild.members.ban(targetUser.id, { reason });
       return messageOrInteraction.reply({
@@ -491,8 +547,7 @@ export default {
       });
     }
 
-    // 10. فك سجن أو سجن بقائمة الأسباب التي تضيفها بنفسك
-    if (cmdName === "فك_سجن" || cmdName === "افراج") {
+    if (actionKey === "unjail") {
       if (!targetMember) {
         return messageOrInteraction.reply({ content: "❌ العضو غير موجود في السيرفر." });
       }
@@ -516,7 +571,7 @@ export default {
       });
     }
 
-    if (cmdName === "سجن") {
+    if (actionKey === "jail") {
       if (!targetMember) {
         return messageOrInteraction.reply({ content: "❌ العضو غير موجود في السيرفر." });
       }

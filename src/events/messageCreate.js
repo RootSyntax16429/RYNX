@@ -23,23 +23,31 @@ const MESSAGE_XP_RATE_LIMIT_ATTEMPTS = 12;
 const MESSAGE_XP_RATE_LIMIT_WINDOW_MS = 10000;
 
 const NO_PREFIX_MOD_COMMANDS = new Set([
-  'السجن',
+  'اوامر_سجن',
   'سجن_اعداد',
+  'اعداد_السجن',
+  'إعداد_السجن',
+  'اعداد_سجن',
   'سجن',
-  '',
+  'السجن',
+  'فك_سجن',
   'افراج',
   'مسح',
   'كتم',
+  'اسكت',
   'تكلم',
+  'انبح',
   'باند',
+  'تف',
   'لاباند',
   'طرد',
+  'بنعالي',
   'تايم',
   'لاتايم',
   'تحذير',
   'تحذيرات',
   'قفل',
-  'افتح',
+  'فتح',
   'اشراف',
   'الاشراف',
 ]);
@@ -76,7 +84,6 @@ async function handleDirectSnaiferCommands(message, client) {
     const trimmed = String(message.content || '').trim();
     if (!trimmed) return false;
 
-    // لوحة سنيفر بدون بريفكس
     if (trimmed === 'اوامر_سنيفر' || trimmed === 'اوامر سنيفر') {
       const showCmd = client.commands?.get('show');
       if (showCmd) {
@@ -85,7 +92,6 @@ async function handleDirectSnaiferCommands(message, client) {
       }
     }
 
-    // أوامر الإشراف والسجن بدون بريفكس أو ببريفكس ($ أو !)
     const parts = trimmed.split(/\s+/);
     const rawFirst = parts[0] || '';
     const cleanedFirst = rawFirst.replace(/^[\$!]+/, '');

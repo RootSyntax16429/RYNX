@@ -16,7 +16,6 @@ import {
 } from "discord.js";
 
 const ticketConfigs = new Map();
-// تخزين بيانات كل تذكرة حسب channelId: { ownerId, claimedBy, locked, reason }
 const activeTickets = new Map();
 
 const DEFAULT_TICKET_CONFIG = {
@@ -358,7 +357,7 @@ export default {
     .setName("create_ticket")
     .setDescription("لوحة التحكم الكاملة بالتذاكر والتذكرة التلقائية"),
   name: "create_ticket",
-  aliases: ["انشاء_تذكره", "انشاء_تذكرة", "تذكره", "تذكرة", "تذاكر", "لوحة_التذاكر"],
+  aliases: ["انشاء_تذكره", "انشاء_تذكرة", "تذكره", "تذكرة", "تذاكر", "لوحة_التذاكر", "لوحه_التذاكر"],
   description: "لوحة التحكم الكاملة بالتذاكر والتذكرة التلقائية",
   async execute(messageOrInteraction, args = [], client) {
     const guild = messageOrInteraction.guild;
@@ -590,7 +589,10 @@ export async function handleSnaiferTicketButton(interaction) {
         return true;
       }
 
-      if (interaction.customId === "snaifer_delete_ticket" || interaction.customId === "snaifer_close_ticket") {
+      if (
+        interaction.customId === "snaifer_delete_ticket" ||
+        interaction.customId === "snaifer_close_ticket"
+      ) {
         const isOwner =
           (ticketState?.ownerId && ticketState.ownerId === interaction.user.id) ||
           interaction.channel?.name?.includes(interaction.user.id.slice(-4));
@@ -619,7 +621,10 @@ export async function handleSnaiferTicketButton(interaction) {
       return true;
     }
 
-    if (interaction.isRoleSelectMenu() && interaction.customId === "ticket_dash_select_support_role") {
+    if (
+      interaction.isRoleSelectMenu() &&
+      interaction.customId === "ticket_dash_select_support_role"
+    ) {
       config.supportRoleId = interaction.values[0] || null;
       await interaction.update(buildTicketControlPanel(guild));
       return true;

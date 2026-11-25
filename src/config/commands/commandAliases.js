@@ -47,12 +47,17 @@ export const COMMAND_ALIASES = {
     "باند",
     "تف",
     "لاباند",
+    "فك_باند",
+    "فك باند",
     "طرد",
     "بنعالي",
     "تايم",
     "لاتايم",
+    "فك_تايم",
+    "فك تايم",
     "تحذير",
     "تحذيرات",
+    "عرض_تحذيرات",
     "قفل",
     "فتح",
   ],
@@ -120,10 +125,15 @@ export function isKnownAlias(input) {
   return Boolean(resolveCommandName(input));
 }
 
+export function getAllRegisteredAliases() {
+  return Object.values(COMMAND_ALIASES).flat();
+}
+
 export default {
   COMMAND_ALIASES,
   resolveCommandName,
   resolveMatchedAlias,
   getCommandAliases,
   isKnownAlias,
+  getAllRegisteredAliases,
 };

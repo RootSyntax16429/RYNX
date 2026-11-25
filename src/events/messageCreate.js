@@ -36,7 +36,6 @@ const NO_PREFIX_MOD_COMMANDS = new Set([
   "سجن_اعداد",
   "اعداد_السجن",
   "إعداد_السجن",
-  "اعداد_سجن",
   "سجن",
   "السجن",
   "فك_سجن",
@@ -67,7 +66,37 @@ const NO_PREFIX_TICKET_COMMANDS = new Set([
   "تذكره",
   "تذكرة",
   "تذاكر",
+  "لوحة_التذاكر",
+  "لوحه_التذاكر",
 ]);
+
+function findCommandInClient(client, resolvedName) {
+  if (!client?.commands) return null;
+  if (client.commands.has(resolvedName)) {
+    return client.commands.get(resolvedName);
+  }
+
+  const normalizedTarget = resolvedName.replace(/[_-]/g, "").toLowerCase();
+  for (const [, cmd] of client.commands) {
+    const cmdName = String(cmd?.name || cmd?.data?.name || "").toLowerCase();
+    if (
+      cmdName === resolvedName.toLowerCase() ||
+      cmdName.replace(/[_-]/g, "") === normalizedTarget
+    ) {
+      return cmd;
+    }
+    if (Array.isArray(cmd?.aliases)) {
+      const matchedAlias = cmd.aliases.some(
+        (a) =>
+          String(a).toLowerCase() === resolvedName.toLowerCase() ||
+          String(a).replace(/[_-]/g, "").toLowerCase() === normalizedTarget
+      );
+      if (matchedAlias) return cmd;
+    }
+  }
+
+  return null;
+}
 
 export default {
   name: Events.MessageCreate,
@@ -89,7 +118,7 @@ export default {
 
       await handlePrefixCommand(message, client);
 
-      // فحص الكلمات التلقائية للسجن والتذاكر (نظام اللفلات معطّل بالكامل)
+      // نظام اللفلات معطّل بالكامل — فحص الكلمات التلقائية فقط
       const autoJailed = await handleAutoJailMessage(message);
       if (autoJailed) {
         return;
@@ -107,8 +136,8 @@ async function handleDirectSnaiferCommands(message, client) {
     const trimmed = String(message.content || "").trim();
     if (!trimmed) return false;
 
-    if (trimmed === "اوامر_سنيفر" || trimmed === "اوامر سنيفر") {
-      const showCmd = client.commands?.get("show");
+    if (trimmed === "اوامر_سنيفر" || trimmed === "اوامر سنيفر" || trimmed === "اوامر") {
+      const showCmd = findCommandInClient(client, "show");
       if (showCmd) {
         await showCmd.execute(message, [], client);
         return true;
@@ -120,19 +149,17 @@ async function handleDirectSnaiferCommands(message, client) {
     const cleanedFirst = rawFirst.replace(/^[\$!]+/, "");
 
     if (NO_PREFIX_MOD_COMMANDS.has(cleanedFirst)) {
-      const modCmd = client.commands?.get("modpanel");
+      const modCmd = findCommandInClient(client, "modpanel");
       if (modCmd) {
-        const args = parts.slice(1);
-        await modCmd.execute(message, args, client);
+        await modCmd.execute(message, parts.slice(1), client);
         return true;
       }
     }
 
     if (NO_PREFIX_TICKET_COMMANDS.has(cleanedFirst)) {
-      const ticketCmd = client.commands?.get("create_ticket");
+      const ticketCmd = findCommandInClient(client, "create_ticket");
       if (ticketCmd) {
-        const args = parts.slice(1);
-        await ticketCmd.execute(message, args, client);
+        await ticketCmd.execute(message, parts.slice(1), client);
         return true;
       }
     }
@@ -173,7 +200,7 @@ async function handlePrefixCommand(message, client) {
 
     const resolvedCommandName = resolveCommandAlias(commandName);
     logger.info(`Resolved command name: ${resolvedCommandName}`);
-    const command = client.commands.get(resolvedCommandName);
+    const command = findCommandInClient(client, resolvedCommandName);
 
     if (!command) {
       logger.warn(`Command not found: ${resolvedCommandName}`);

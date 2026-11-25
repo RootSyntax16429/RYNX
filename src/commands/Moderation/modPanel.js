@@ -10,6 +10,7 @@ import {
   PermissionFlagsBits,
   PermissionsBitField,
   SlashCommandBuilder,
+  StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
 } from "discord.js";
@@ -21,11 +22,11 @@ const CONFIG_STORE_PATH = path.join(DATA_DIR, "mod_configs.json");
 const WARNS_STORE_PATH = path.join(DATA_DIR, "mod_warns.json");
 const EXEMPTION_STORE_PATH = path.join(DATA_DIR, "jail_exemptions.json");
 
-export const JAIL_REASONS = [
-  { key: "insult", label: "قذف / سب", reason: "قذف أو سب الأعضاء" },
-  { key: "promo", label: "إعلانات / روابط", reason: "نشر روابط أو إعلانات" },
-  { key: "spam", label: "إزعاج / سبام", reason: "السبام والإزعاج المتكرر" },
-  { key: "rules", label: "مخالفة القوانين", reason: "مخالفة قوانين السيرفر" },
+const DEFAULT_JAIL_REASONS = [
+  "قذف أو سب الأعضاء",
+  "نشر روابط أو إعلانات",
+  "السبام والإزعاج المتكرر",
+  "مخالفة قوانين السيرفر",
 ];
 
 function readJsonMap(filePath) {
@@ -94,6 +95,10 @@ function getJailConfig(guildId) {
       autoJailWords: Array.isArray(existing.autoJailWords)
         ? existing.autoJailWords
         : [],
+      jailReasons:
+        Array.isArray(existing.jailReasons) && existing.jailReasons.length
+          ? existing.jailReasons
+          : [...DEFAULT_JAIL_REASONS],
     };
   }
 
@@ -103,6 +108,7 @@ function getJailConfig(guildId) {
     exemptionChannelId: null,
     autoJailEnabled: true,
     autoJailWords: [],
+    jailReasons: [...DEFAULT_JAIL_REASONS],
   };
   guildModConfigs.set(guildId, defaultCfg);
   writeJsonMap(CONFIG_STORE_PATH, guildModConfigs);
@@ -170,6 +176,23 @@ function getRestorableRoles(guild, savedRoleIds = []) {
     if (botMember && role.position >= botHighestPos) return false;
     return true;
   });
+}
+
+function resolveJailReason(rawReason = "", reasonsList = DEFAULT_JAIL_REASONS) {
+  const trimmed = String(rawReason || "").trim();
+  if (!trimmed || trimmed === "بدون سبب") {
+    return reasonsList[0] || "مخالفة القوانين";
+  }
+
+  const idx = Number(trimmed) - 1;
+  if (!Number.isNaN(idx) && reasonsList[idx]) {
+    return reasonsList[idx];
+  }
+
+  const matched = reasonsList.find((r) =>
+    normalizeArabic(r).includes(normalizeArabic(trimmed))
+  );
+  return matched || trimmed;
 }
 
 async function setupSaidnayaAndExemptionRooms(guild, cfg) {
@@ -348,19 +371,20 @@ export function buildModPanelEmbed(guild) {
   const exemptionChannelText = cfg.exemptionChannelId
     ? `<#${cfg.exemptionChannelId}>`
     : "غير محدد";
+
   const wordsText = cfg.autoJailWords.length
     ? cfg.autoJailWords.map((w, i) => `${i + 1}. \`${w}\``).join(" ، ")
     : "لا توجد كلمات سجن تلقائي";
 
-  const reasonsText = JAIL_REASONS.map(
-    (r, i) => `${i + 1}. **${r.label}** — ${r.reason}`
-  ).join("\n");
+  const reasonsText = cfg.jailReasons.length
+    ? cfg.jailReasons.map((r, i) => `${i + 1}. **${r}**`).join("\n")
+    : "لا توجد خيارات أسباب مضافة";
 
   return new EmbedBuilder()
     .setColor("#2B2D31")
     .setTitle("🛡️ لوحة تحكم الإشراف وصيدنايا — سنيفر")
     .setDescription(
-      "تحكم كامل بالإشراف، السجن وحفظ الرولات في ملف JSON، صيدنايا، الإعفاء، والكلمات التلقائية من لوحة واحدة."
+      "تحكم كامل بالخيارات، أسباب السجن، حفظ الرولات في ملف JSON، صيدنايا، الإعفاء، والكلمات التلقائية."
     )
     .addFields(
       { name: "🔒 رتبة السجن", value: jailRoleText, inline: true },
@@ -371,21 +395,20 @@ export function buildModPanelEmbed(guild) {
         value: cfg.autoJailEnabled ? "مفعّل ✅" : "معطّل ⛔",
         inline: true,
       },
+      { name: "📋 خيارات أسباب السجن (من تحكمك)", value: reasonsText, inline: false },
       { name: "🚨 كلمات السجن التلقائي", value: wordsText, inline: false },
-      { name: "📋 أسباب السجن المعتمدة", value: reasonsText, inline: false },
       {
-        name: "📌 أوامر سريعة",
+        name: "📌 أوامر الشات السريعة",
         value:
-          "`سجن @عضو [سبب أو رقم 1-4]` • `فك_سجن @عضو`\n" +
-          "`انشاء_السجن` (ينشئ صيدنايا وروم الإعفاء والرتبة)\n" +
-          "`اعفاء [سبب الطلب]` • `سجن_اعداد [رتبة] [روم_صيدنايا] [روم_الاعفاء]`\n" +
+          "`سجن @عضو [رقم السبب أو نصه]` • `فك_سجن @عضو`\n" +
+          "`انشاء_السجن` • `اعفاء [السبب]` • `سجن_اعداد [رتبة] [صيدنايا] [الإعفاء]`\n" +
           "`كتم @عضو [المدة]` • `تكلم @عضو` • `طرد @عضو` • `باند @عضو` • `لاباند ID`\n" +
           "`تايم @عضو [10m]` • `لاتايم @عضو` • `تحذير @عضو` • `تحذيرات @عضو`\n" +
           "`مسح [1-100]` • `قفل` • `فتح`",
         inline: false,
       }
     )
-    .setFooter({ text: "سنيفر سيستم • الإدارة وصلاحيات الأونريه" });
+    .setFooter({ text: "سنيفر سيستم • لوحة التحكم الموسّعة" });
 }
 
 function buildModPanelComponents(guild) {
@@ -408,36 +431,69 @@ function buildModPanelComponents(guild) {
       .setEmoji("🏗️")
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
-      .setCustomId("snaifer_mod_warn")
-      .setLabel("تحذير")
-      .setEmoji("⚠️")
+      .setCustomId("snaifer_mod_set_jail")
+      .setLabel("إعداد الرومات والرتبة")
+      .setEmoji("⚙️")
       .setStyle(ButtonStyle.Secondary)
   );
 
   const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("snaifer_mod_add_reason")
+      .setLabel("إضافة خيار سبب")
+      .setEmoji("➕")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId("snaifer_mod_pop_reason")
+      .setLabel("حذف آخر سبب")
+      .setEmoji("↩️")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("snaifer_mod_clear_reasons")
+      .setLabel("تصفير الأسباب")
+      .setEmoji("🧹")
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId("snaifer_mod_warn_check")
+      .setLabel("عرض تحذيرات")
+      .setEmoji("📄")
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  const row3 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("snaifer_mod_timeout")
       .setLabel("تايم أوت")
       .setEmoji("⏳")
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
+      .setCustomId("snaifer_mod_untimeout")
+      .setLabel("فك تايم أوت")
+      .setEmoji("⏱️")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId("snaifer_mod_warn")
+      .setLabel("تحذير")
+      .setEmoji("⚠️")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
       .setCustomId("snaifer_mod_kick")
       .setLabel("طرد")
       .setEmoji("👢")
-      .setStyle(ButtonStyle.Secondary),
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  const row4 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("snaifer_mod_ban")
       .setLabel("باند")
       .setEmoji("🔨")
       .setStyle(ButtonStyle.Danger),
     new ButtonBuilder()
-      .setCustomId("snaifer_mod_set_jail")
-      .setLabel("إعداد السجن")
-      .setEmoji("⚙️")
-      .setStyle(ButtonStyle.Secondary)
-  );
-
-  const row3 = new ActionRowBuilder().addComponents(
+      .setCustomId("snaifer_mod_unban")
+      .setLabel("فك باند")
+      .setEmoji("🕊️")
+      .setStyle(ButtonStyle.Success),
     new ButtonBuilder()
       .setCustomId("snaifer_mod_toggle_auto")
       .setLabel(cfg.autoJailEnabled ? "إيقاف التلقائي" : "تفعيل التلقائي")
@@ -446,33 +502,11 @@ function buildModPanelComponents(guild) {
     new ButtonBuilder()
       .setCustomId("snaifer_mod_add_word")
       .setLabel("إضافة كلمة تلقائية")
-      .setEmoji("➕")
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId("snaifer_mod_clear_words")
-      .setLabel("مسح الكلمات")
-      .setEmoji("🗑️")
-      .setStyle(ButtonStyle.Secondary)
+      .setEmoji("🚨")
+      .setStyle(ButtonStyle.Primary)
   );
 
-  return [row1, row2, row3];
-}
-
-function resolveJailReason(rawReason = "") {
-  const trimmed = String(rawReason || "").trim();
-  if (!trimmed || trimmed === "بدون سبب") return "مخالفة القوانين";
-
-  const idx = Number(trimmed) - 1;
-  if (!Number.isNaN(idx) && JAIL_REASONS[idx]) {
-    return JAIL_REASONS[idx].reason;
-  }
-
-  const matched = JAIL_REASONS.find(
-    (r) =>
-      normalizeArabic(r.key) === normalizeArabic(trimmed) ||
-      normalizeArabic(r.label).includes(normalizeArabic(trimmed))
-  );
-  return matched ? matched.reason : trimmed;
+  return [row1, row2, row3, row4];
 }
 
 async function submitExemptionRequest(guild, member, cfg, reasonText, replyFn) {
@@ -578,6 +612,47 @@ export async function handleAutoJailMessage(message) {
 
 export async function handleSnaiferModInteraction(interaction) {
   if (!interaction?.guild) return false;
+
+  if (interaction.isStringSelectMenu()) {
+    if (interaction.customId.startsWith("snaifer_jail_reason_select:")) {
+      const targetUserId = interaction.customId.split(":")[1];
+      const chosenReason = interaction.values?.[0] || "مخالفة القوانين";
+      const cfg = getJailConfig(interaction.guild.id);
+      const member = await interaction.guild.members
+        .fetch(targetUserId)
+        .catch(() => null);
+
+      if (!member) {
+        await interaction.update({
+          content: "❌ لم يتم العثور على العضو.",
+          components: [],
+        });
+        return true;
+      }
+
+      if (isProtectedTarget(member, interaction.guild)) {
+        await interaction.update({
+          content: "❌ لا يمكن سجن الأونر.",
+          components: [],
+        });
+        return true;
+      }
+
+      await applyJailToMember(
+        interaction.guild,
+        member,
+        cfg,
+        chosenReason,
+        interaction.user.id
+      );
+
+      await interaction.update({
+        content: `🔒 تم سجن ${member} في صيدنايا | السبب: **${chosenReason}**`,
+        components: [],
+      });
+      return true;
+    }
+  }
 
   if (interaction.isButton()) {
     const cfg = getJailConfig(interaction.guild.id);
@@ -700,8 +775,20 @@ export async function handleSnaiferModInteraction(interaction) {
         return true;
       }
 
-      if (interaction.customId === "snaifer_mod_clear_words") {
-        cfg.autoJailWords = [];
+      if (interaction.customId === "snaifer_mod_pop_reason") {
+        if (cfg.jailReasons.length > 0) {
+          cfg.jailReasons.pop();
+          saveJailConfig(interaction.guild.id, cfg);
+        }
+        await interaction.update({
+          embeds: [buildModPanelEmbed(interaction.guild)],
+          components: buildModPanelComponents(interaction.guild),
+        });
+        return true;
+      }
+
+      if (interaction.customId === "snaifer_mod_clear_reasons") {
+        cfg.jailReasons = [];
         saveJailConfig(interaction.guild.id, cfg);
         await interaction.update({
           embeds: [buildModPanelEmbed(interaction.guild)],
@@ -710,13 +797,39 @@ export async function handleSnaiferModInteraction(interaction) {
         return true;
       }
 
+      if (interaction.customId === "snaifer_mod_add_reason") {
+        const modal = new ModalBuilder()
+          .setCustomId("snaifer_modal_add_reason")
+          .setTitle("إضافة خيار سبب للسجن");
+
+        const reasonInput = new TextInputBuilder()
+          .setCustomId("mod_input_1")
+          .setLabel("اكتب خيار السبب الجديد")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
+        modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
+        await interaction.showModal(modal);
+        return true;
+      }
+
+      if (interaction.customId === "snaifer_mod_jail") {
+        const modal = new ModalBuilder()
+          .setCustomId("snaifer_modal_pick_jail_target")
+          .setTitle("سجن عضو — اختر العضو");
+
+        const targetInput = new TextInputBuilder()
+          .setCustomId("mod_input_1")
+          .setLabel("آيدي أو منشن العضو")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
+        modal.addComponents(new ActionRowBuilder().addComponents(targetInput));
+        await interaction.showModal(modal);
+        return true;
+      }
+
       const actionMap = {
-        snaifer_mod_jail: {
-          id: "snaifer_modal_jail",
-          title: "سجن عضو في صيدنايا",
-          targetLabel: "آيدي أو منشن العضو",
-          extraLabel: "السبب أو رقم (1-4): 1قذف 2إعلان 3سبام 4قوانين",
-        },
         snaifer_mod_unjail: {
           id: "snaifer_modal_unjail",
           title: "فك سجن عضو",
@@ -729,11 +842,23 @@ export async function handleSnaiferModInteraction(interaction) {
           targetLabel: "آيدي أو منشن العضو",
           extraLabel: "المدة (مثال: 10m أو 1h)",
         },
+        snaifer_mod_untimeout: {
+          id: "snaifer_modal_untimeout",
+          title: "فك تايم أوت عن عضو",
+          targetLabel: "آيدي أو منشن العضو",
+          extraLabel: "السبب (اختياري)",
+        },
         snaifer_mod_warn: {
           id: "snaifer_modal_warn",
           title: "تحذير عضو",
           targetLabel: "آيدي أو منشن العضو",
           extraLabel: "سبب التحذير",
+        },
+        snaifer_mod_warn_check: {
+          id: "snaifer_modal_warn_check",
+          title: "عرض تحذيرات عضو",
+          targetLabel: "آيدي أو منشن العضو",
+          extraLabel: "ملاحظة (اختياري)",
         },
         snaifer_mod_kick: {
           id: "snaifer_modal_kick",
@@ -745,6 +870,12 @@ export async function handleSnaiferModInteraction(interaction) {
           id: "snaifer_modal_ban",
           title: "حظر عضو (باند)",
           targetLabel: "آيدي أو منشن العضو",
+          extraLabel: "السبب (اختياري)",
+        },
+        snaifer_mod_unban: {
+          id: "snaifer_modal_unban",
+          title: "فك باند عن عضو",
+          targetLabel: "آيدي العضو",
           extraLabel: "السبب (اختياري)",
         },
         snaifer_mod_set_jail: {
@@ -805,10 +936,77 @@ export async function handleSnaiferModInteraction(interaction) {
       return true;
     }
 
+    if (interaction.customId === "snaifer_modal_pick_jail_target") {
+      const rawTarget = interaction.fields.getTextInputValue("mod_input_1").trim();
+      const userId = parseId(rawTarget);
+      const member = await interaction.guild.members.fetch(userId).catch(() => null);
+
+      if (!member) {
+        await interaction.reply({
+          content: "❌ لم يتم العثور على العضو في السيرفر.",
+          ephemeral: true,
+        });
+        return true;
+      }
+
+      if (isProtectedTarget(member, interaction.guild)) {
+        await interaction.reply({
+          content: "❌ لا يمكن سجن الأونر.",
+          ephemeral: true,
+        });
+        return true;
+      }
+
+      if (!cfg.jailReasons.length) {
+        await applyJailToMember(
+          interaction.guild,
+          member,
+          cfg,
+          "مخالفة القوانين",
+          interaction.user.id
+        );
+        await interaction.reply({
+          content: `🔒 تم سجن ${member} في صيدنايا | السبب: **مخالفة القوانين**`,
+        });
+        return true;
+      }
+
+      const menu = new StringSelectMenuBuilder()
+        .setCustomId(`snaifer_jail_reason_select:${member.id}`)
+        .setPlaceholder("اختر سبب السجن من خياراتك")
+        .addOptions(
+          cfg.jailReasons.slice(0, 25).map((reason, idx) => ({
+            label: reason.slice(0, 100),
+            value: reason.slice(0, 100),
+            description: `خيار رقم ${idx + 1}`,
+          }))
+        );
+
+      const row = new ActionRowBuilder().addComponents(menu);
+      await interaction.reply({
+        content: `اختر سبب سجن ${member} من القائمة:`,
+        components: [row],
+        ephemeral: true,
+      });
+      return true;
+    }
+
     if (interaction.customId.startsWith("snaifer_modal_")) {
       const val1 = interaction.fields.getTextInputValue("mod_input_1").trim();
       const val2 =
         interaction.fields.getTextInputValue("mod_input_2")?.trim() || "بدون سبب";
+
+      if (interaction.customId === "snaifer_modal_add_reason") {
+        if (val1 && !cfg.jailReasons.includes(val1)) {
+          cfg.jailReasons.push(val1);
+          saveJailConfig(interaction.guild.id, cfg);
+        }
+        await interaction.update({
+          embeds: [buildModPanelEmbed(interaction.guild)],
+          components: buildModPanelComponents(interaction.guild),
+        });
+        return true;
+      }
 
       if (interaction.customId === "snaifer_modal_add_word") {
         if (val1 && !cfg.autoJailWords.includes(val1)) {
@@ -839,35 +1037,6 @@ export async function handleSnaiferModInteraction(interaction) {
 
       const userId = parseId(val1);
       const member = await interaction.guild.members.fetch(userId).catch(() => null);
-
-      if (interaction.customId === "snaifer_modal_jail") {
-        if (!member) {
-          await interaction.reply({
-            content: "❌ لم يتم العثور على العضو.",
-            ephemeral: true,
-          });
-          return true;
-        }
-        if (isProtectedTarget(member, interaction.guild)) {
-          await interaction.reply({
-            content: "❌ لا يمكن سجن الأونر.",
-            ephemeral: true,
-          });
-          return true;
-        }
-        const reason = resolveJailReason(val2);
-        await applyJailToMember(
-          interaction.guild,
-          member,
-          cfg,
-          reason,
-          interaction.user.id
-        );
-        await interaction.reply({
-          content: `🔒 تم سجن ${member} في صيدنايا | السبب: **${reason}**`,
-        });
-        return true;
-      }
 
       if (interaction.customId === "snaifer_modal_unjail") {
         if (!member) {
@@ -907,6 +1076,21 @@ export async function handleSnaiferModInteraction(interaction) {
         return true;
       }
 
+      if (interaction.customId === "snaifer_modal_untimeout") {
+        if (!member) {
+          await interaction.reply({
+            content: "❌ لم يتم العثور على العضو.",
+            ephemeral: true,
+          });
+          return true;
+        }
+        await member.timeout(null, "فك التايم أوت من لوحة سنيفر");
+        await interaction.reply({
+          content: `⏱️ تم فك التايم أوت عن ${member}.`,
+        });
+        return true;
+      }
+
       if (interaction.customId === "snaifer_modal_warn") {
         if (!member) {
           await interaction.reply({
@@ -930,6 +1114,23 @@ export async function handleSnaiferModInteraction(interaction) {
         );
         await interaction.reply({
           content: `⚠️ تم تحذير ${member} (الإجمالي: **${count}**) | السبب: **${val2}**`,
+        });
+        return true;
+      }
+
+      if (interaction.customId === "snaifer_modal_warn_check") {
+        const warns = getUserWarnings(interaction.guild.id, userId);
+        if (!warns.length) {
+          await interaction.reply({
+            content: `ℹ️ لا توجد تحذيرات مسجلة للعضو <@${userId}>.`,
+            ephemeral: true,
+          });
+          return true;
+        }
+        const list = warns.map((w, idx) => `${idx + 1}. **${w.reason}**`).join("\n");
+        await interaction.reply({
+          content: `⚠️ تحذيرات <@${userId}> (**${warns.length}**):\n${list}`,
+          ephemeral: true,
         });
         return true;
       }
@@ -967,6 +1168,14 @@ export async function handleSnaiferModInteraction(interaction) {
         await interaction.guild.members.ban(userId, { reason: val2 });
         await interaction.reply({
           content: `🔨 تم حظر العضو \`${userId}\` | السبب: **${val2}**`,
+        });
+        return true;
+      }
+
+      if (interaction.customId === "snaifer_modal_unban") {
+        await interaction.guild.members.unban(userId, val2);
+        await interaction.reply({
+          content: `🕊️ تم فك الحظر عن \`${userId}\`.`,
         });
         return true;
       }
@@ -1104,12 +1313,12 @@ export default {
         return reply({ content: "❌ ما عندك صلاحية السجن.", ephemeral: true });
       }
       const targetId = parseId(args[0]);
-      const reason = resolveJailReason(args.slice(1).join(" "));
+      const reason = resolveJailReason(args.slice(1).join(" "), cfg.jailReasons);
       const target = await guild.members.fetch(targetId).catch(() => null);
       if (!target) {
         return reply({
           content:
-            "❌ حدد عضو صحيح: `سجن @عضو [السبب أو 1-4]`\nالأسباب: `1` قذف/سب • `2` إعلانات • `3` سبام • `4` مخالفة القوانين",
+            "❌ حدد عضو صحيح: `سجن @عضو [رقم السبب أو نصه]`",
         });
       }
       if (isProtectedTarget(target, guild)) {

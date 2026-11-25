@@ -4,6 +4,7 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  ChannelType,
   EmbedBuilder,
   ModalBuilder,
   PermissionFlagsBits,
@@ -18,6 +19,14 @@ const DATA_DIR = path.resolve(process.cwd(), "data");
 const JAIL_STORE_PATH = path.join(DATA_DIR, "jailed_roles.json");
 const CONFIG_STORE_PATH = path.join(DATA_DIR, "mod_configs.json");
 const WARNS_STORE_PATH = path.join(DATA_DIR, "mod_warns.json");
+const EXEMPTION_STORE_PATH = path.join(DATA_DIR, "jail_exemptions.json");
+
+export const JAIL_REASONS = [
+  { key: "insult", label: "قذف / سب", reason: "قذف أو سب الأعضاء" },
+  { key: "promo", label: "إعلانات / روابط", reason: "نشر روابط أو إعلانات" },
+  { key: "spam", label: "إزعاج / سبام", reason: "السبام والإزعاج المتكرر" },
+  { key: "rules", label: "مخالفة القوانين", reason: "مخالفة قوانين السيرفر" },
+];
 
 function readJsonMap(filePath) {
   try {
@@ -43,6 +52,7 @@ function writeJsonMap(filePath, map) {
 const jailedMembers = readJsonMap(JAIL_STORE_PATH);
 const guildModConfigs = readJsonMap(CONFIG_STORE_PATH);
 const guildWarns = readJsonMap(WARNS_STORE_PATH);
+const exemptionRequests = readJsonMap(EXEMPTION_STORE_PATH);
 
 function isOwnerUser(userId, guild = null) {
   if (!userId) return false;
@@ -76,6 +86,7 @@ function getJailConfig(guildId) {
     return {
       jailRoleId: existing.jailRoleId || null,
       jailChannelId: existing.jailChannelId || null,
+      exemptionChannelId: existing.exemptionChannelId || null,
       autoJailEnabled:
         typeof existing.autoJailEnabled === "boolean"
           ? existing.autoJailEnabled
@@ -89,6 +100,7 @@ function getJailConfig(guildId) {
   const defaultCfg = {
     jailRoleId: null,
     jailChannelId: null,
+    exemptionChannelId: null,
     autoJailEnabled: true,
     autoJailWords: [],
   };
@@ -130,8 +142,8 @@ function normalizeArabic(text = "") {
     .trim();
 }
 
-function parseUserId(raw = "") {
-  return String(raw).replace(/[<@!>]/g, "").trim();
+function parseId(raw = "") {
+  return String(raw).replace(/[<@!#&>]/g, "").trim();
 }
 
 function parseDurationMs(raw = "") {
@@ -148,7 +160,7 @@ function parseDurationMs(raw = "") {
   return val * 60 * 1000;
 }
 
-function getRestorableRoles(guild, member, savedRoleIds = []) {
+function getRestorableRoles(guild, savedRoleIds = []) {
   const botMember = guild.members.me;
   const botHighestPos = botMember?.roles?.highest?.position ?? 0;
 
@@ -160,7 +172,111 @@ function getRestorableRoles(guild, member, savedRoleIds = []) {
   });
 }
 
-async function applyJailToMember(guild, member, cfg, reason = "مخالفة القوانين") {
+async function setupSaidnayaAndExemptionRooms(guild, cfg) {
+  let jailRole = cfg.jailRoleId ? guild.roles.cache.get(cfg.jailRoleId) : null;
+  if (!jailRole) {
+    jailRole = await guild.roles
+      .create({
+        name: "سجين • صيدنايا",
+        color: "#5865F2",
+        reason: "إنشاء رتبة السجن لنظام صيدنايا",
+      })
+      .catch(() => null);
+    if (jailRole) cfg.jailRoleId = jailRole.id;
+  }
+
+  let jailChannel = cfg.jailChannelId
+    ? guild.channels.cache.get(cfg.jailChannelId)
+    : null;
+  if (!jailChannel) {
+    const overwrites = [
+      {
+        id: guild.roles.everyone.id,
+        deny: [PermissionFlagsBits.ViewChannel],
+      },
+    ];
+    if (jailRole) {
+      overwrites.push({
+        id: jailRole.id,
+        allow: [
+          PermissionFlagsBits.ViewChannel,
+          PermissionFlagsBits.SendMessages,
+          PermissionFlagsBits.ReadMessageHistory,
+        ],
+      });
+    }
+
+    jailChannel = await guild.channels
+      .create({
+        name: "صيدنايا",
+        type: ChannelType.GuildText,
+        permissionOverwrites: overwrites,
+        reason: "إنشاء روم صيدنايا للسجناء",
+      })
+      .catch(() => null);
+    if (jailChannel) cfg.jailChannelId = jailChannel.id;
+  }
+
+  let exemptionChannel = cfg.exemptionChannelId
+    ? guild.channels.cache.get(cfg.exemptionChannelId)
+    : null;
+  if (!exemptionChannel) {
+    exemptionChannel = await guild.channels
+      .create({
+        name: "طلبات-الإعفاء",
+        type: ChannelType.GuildText,
+        permissionOverwrites: [
+          {
+            id: guild.roles.everyone.id,
+            deny: [PermissionFlagsBits.ViewChannel],
+          },
+          {
+            id: guild.members.me.id,
+            allow: [
+              PermissionFlagsBits.ViewChannel,
+              PermissionFlagsBits.SendMessages,
+              PermissionFlagsBits.ManageChannels,
+            ],
+          },
+        ],
+        reason: "إنشاء روم طلبات الإعفاء للإدارة",
+      })
+      .catch(() => null);
+    if (exemptionChannel) cfg.exemptionChannelId = exemptionChannel.id;
+  }
+
+  saveJailConfig(guild.id, cfg);
+
+  if (jailChannel && typeof jailChannel.send === "function") {
+    const welcomeJailEmbed = new EmbedBuilder()
+      .setColor("#2B2D31")
+      .setTitle("🔒 صيدنايا — قسم السجناء")
+      .setDescription(
+        "أنت الآن في **صيدنايا**.\nإذا عندك عذر وتبي تطلب إعفاء، اضغط على زر **تقديم إعفاء** بالأسفل واكتب سبب طلبك."
+      )
+      .setFooter({ text: "سنيفر سيستم • نظام الإعفاء" });
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("snaifer_exemption_open")
+        .setLabel("تقديم إعفاء")
+        .setEmoji("📝")
+        .setStyle(ButtonStyle.Primary)
+    );
+
+    await jailChannel.send({ embeds: [welcomeJailEmbed], components: [row] }).catch(() => {});
+  }
+
+  return { jailRole, jailChannel, exemptionChannel };
+}
+
+async function applyJailToMember(
+  guild,
+  member,
+  cfg,
+  reason = "مخالفة القوانين",
+  moderatorId = null
+) {
   const key = `${guild.id}:${member.id}`;
   const previousRoles = member.roles.cache
     .filter((r) => r.id !== guild.roles.everyone.id && r.id !== cfg.jailRoleId)
@@ -176,13 +292,44 @@ async function applyJailToMember(guild, member, cfg, reason = "مخالفة ال
       await member.roles.set([cfg.jailRoleId], reason).catch(() => {});
     }
   }
+
+  if (cfg.jailChannelId) {
+    const jailChannel = guild.channels.cache.get(cfg.jailChannelId);
+    if (jailChannel && typeof jailChannel.send === "function") {
+      const embed = new EmbedBuilder()
+        .setColor("#ED4245")
+        .setTitle("🔒 تم إيداع عضو في صيدنايا")
+        .addFields(
+          { name: "👤 العضو", value: `${member} (\`${member.id}\`)`, inline: true },
+          {
+            name: "👮 بواسطة",
+            value: moderatorId ? `<@${moderatorId}>` : "النظام التلقائي",
+            inline: true,
+          },
+          { name: "📌 السبب", value: `**${reason}**`, inline: false }
+        )
+        .setTimestamp();
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("snaifer_exemption_open")
+          .setLabel("تقديم إعفاء")
+          .setEmoji("📝")
+          .setStyle(ButtonStyle.Primary)
+      );
+
+      await jailChannel
+        .send({ content: `${member}`, embeds: [embed], components: [row] })
+        .catch(() => {});
+    }
+  }
 }
 
 async function releaseJailFromMember(guild, member, cfg, reason = "فك السجن") {
   const key = `${guild.id}:${member.id}`;
   const savedRoles = jailedMembers.get(key);
   const prevRoles = Array.isArray(savedRoles) ? savedRoles : [];
-  const manageableRoles = getRestorableRoles(guild, member, prevRoles);
+  const manageableRoles = getRestorableRoles(guild, prevRoles);
 
   if (manageableRoles.length > 0) {
     await member.roles.set(manageableRoles, reason).catch(() => {});
@@ -198,34 +345,43 @@ export function buildModPanelEmbed(guild) {
   const cfg = getJailConfig(guild.id);
   const jailRoleText = cfg.jailRoleId ? `<@&${cfg.jailRoleId}>` : "غير محدد";
   const jailChannelText = cfg.jailChannelId ? `<#${cfg.jailChannelId}>` : "غير محدد";
+  const exemptionChannelText = cfg.exemptionChannelId
+    ? `<#${cfg.exemptionChannelId}>`
+    : "غير محدد";
   const wordsText = cfg.autoJailWords.length
     ? cfg.autoJailWords.map((w, i) => `${i + 1}. \`${w}\``).join(" ، ")
     : "لا توجد كلمات سجن تلقائي";
 
+  const reasonsText = JAIL_REASONS.map(
+    (r, i) => `${i + 1}. **${r.label}** — ${r.reason}`
+  ).join("\n");
+
   return new EmbedBuilder()
     .setColor("#2B2D31")
-    .setTitle("🛡️ لوحة تحكم الإشراف والسجن — سنيفر")
+    .setTitle("🛡️ لوحة تحكم الإشراف وصيدنايا — سنيفر")
     .setDescription(
-      "تحكم كامل بالإشراف، السجن وحفظ الرولات في ملف JSON، التحذيرات، والكلمات التلقائية من لوحة واحدة."
+      "تحكم كامل بالإشراف، السجن وحفظ الرولات في ملف JSON، صيدنايا، الإعفاء، والكلمات التلقائية من لوحة واحدة."
     )
     .addFields(
       { name: "🔒 رتبة السجن", value: jailRoleText, inline: true },
-      { name: "🏠 روم السجن", value: jailChannelText, inline: true },
+      { name: "🏠 روم صيدنايا", value: jailChannelText, inline: true },
+      { name: "📩 روم الإعفاء", value: exemptionChannelText, inline: true },
       {
         name: "⚡ السجن التلقائي",
         value: cfg.autoJailEnabled ? "مفعّل ✅" : "معطّل ⛔",
         inline: true,
       },
       { name: "🚨 كلمات السجن التلقائي", value: wordsText, inline: false },
+      { name: "📋 أسباب السجن المعتمدة", value: reasonsText, inline: false },
       {
         name: "📌 أوامر سريعة",
         value:
-          "`سجن @عضو [السبب]` • `فك_سجن @عضو`\n" +
-          "`كتم @عضو [المدة]` • `تكلم @عضو`\n" +
-          "`طرد @عضو [السبب]` • `باند @عضو [السبب]` • `لاباند ID`\n" +
-          "`تايم @عضو [10m]` • `لاتايم @عضو`\n" +
-          "`تحذير @عضو [السبب]` • `تحذيرات @عضو`\n" +
-          "`مسح [1-100]` • `قفل` • `فتح` • `سجن_اعداد`",
+          "`سجن @عضو [سبب أو رقم 1-4]` • `فك_سجن @عضو`\n" +
+          "`انشاء_السجن` (ينشئ صيدنايا وروم الإعفاء والرتبة)\n" +
+          "`اعفاء [سبب الطلب]` • `سجن_اعداد [رتبة] [روم_صيدنايا] [روم_الاعفاء]`\n" +
+          "`كتم @عضو [المدة]` • `تكلم @عضو` • `طرد @عضو` • `باند @عضو` • `لاباند ID`\n" +
+          "`تايم @عضو [10m]` • `لاتايم @عضو` • `تحذير @عضو` • `تحذيرات @عضو`\n" +
+          "`مسح [1-100]` • `قفل` • `فتح`",
         inline: false,
       }
     )
@@ -247,9 +403,9 @@ function buildModPanelComponents(guild) {
       .setEmoji("🔓")
       .setStyle(ButtonStyle.Success),
     new ButtonBuilder()
-      .setCustomId("snaifer_mod_timeout")
-      .setLabel("تايم أوت")
-      .setEmoji("⏳")
+      .setCustomId("snaifer_mod_create_rooms")
+      .setLabel("إنشاء صيدنايا والإعفاء")
+      .setEmoji("🏗️")
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
       .setCustomId("snaifer_mod_warn")
@@ -259,6 +415,11 @@ function buildModPanelComponents(guild) {
   );
 
   const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("snaifer_mod_timeout")
+      .setLabel("تايم أوت")
+      .setEmoji("⏳")
+      .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
       .setCustomId("snaifer_mod_kick")
       .setLabel("طرد")
@@ -273,15 +434,15 @@ function buildModPanelComponents(guild) {
       .setCustomId("snaifer_mod_set_jail")
       .setLabel("إعداد السجن")
       .setEmoji("⚙️")
-      .setStyle(ButtonStyle.Secondary),
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  const row3 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("snaifer_mod_toggle_auto")
       .setLabel(cfg.autoJailEnabled ? "إيقاف التلقائي" : "تفعيل التلقائي")
       .setEmoji("⚡")
-      .setStyle(cfg.autoJailEnabled ? ButtonStyle.Secondary : ButtonStyle.Success)
-  );
-
-  const row3 = new ActionRowBuilder().addComponents(
+      .setStyle(cfg.autoJailEnabled ? ButtonStyle.Secondary : ButtonStyle.Success),
     new ButtonBuilder()
       .setCustomId("snaifer_mod_add_word")
       .setLabel("إضافة كلمة تلقائية")
@@ -295,6 +456,88 @@ function buildModPanelComponents(guild) {
   );
 
   return [row1, row2, row3];
+}
+
+function resolveJailReason(rawReason = "") {
+  const trimmed = String(rawReason || "").trim();
+  if (!trimmed || trimmed === "بدون سبب") return "مخالفة القوانين";
+
+  const idx = Number(trimmed) - 1;
+  if (!Number.isNaN(idx) && JAIL_REASONS[idx]) {
+    return JAIL_REASONS[idx].reason;
+  }
+
+  const matched = JAIL_REASONS.find(
+    (r) =>
+      normalizeArabic(r.key) === normalizeArabic(trimmed) ||
+      normalizeArabic(r.label).includes(normalizeArabic(trimmed))
+  );
+  return matched ? matched.reason : trimmed;
+}
+
+async function submitExemptionRequest(guild, member, cfg, reasonText, replyFn) {
+  const key = `${guild.id}:${member.id}`;
+  const isJailed =
+    jailedMembers.has(key) || (cfg.jailRoleId && member.roles.cache.has(cfg.jailRoleId));
+
+  if (!isJailed && !isOwnerUser(member.id, guild)) {
+    return replyFn({
+      content: "❌ تقديم الإعفاء متاح فقط للأعضاء الموجودين في السجن.",
+      ephemeral: true,
+    });
+  }
+
+  const targetChannel = cfg.exemptionChannelId
+    ? guild.channels.cache.get(cfg.exemptionChannelId)
+    : null;
+
+  if (!targetChannel || typeof targetChannel.send !== "function") {
+    return replyFn({
+      content:
+        "❌ روم الإعفاء غير محدد بعد. استخدم زر **إنشاء صيدنايا والإعفاء** أو أمر `انشاء_السجن`.",
+      ephemeral: true,
+    });
+  }
+
+  const requestId = `${guild.id}:${member.id}:${Date.now()}`;
+  exemptionRequests.set(requestId, {
+    guildId: guild.id,
+    userId: member.id,
+    reason: reasonText,
+    status: "pending",
+    createdAt: new Date().toISOString(),
+  });
+  writeJsonMap(EXEMPTION_STORE_PATH, exemptionRequests);
+
+  const embed = new EmbedBuilder()
+    .setColor("#FEE75C")
+    .setTitle("📝 طلب إعفاء جديد من صيدنايا")
+    .addFields(
+      { name: "👤 مقدم الطلب", value: `${member} (\`${member.id}\`)`, inline: true },
+      { name: "📌 الحالة", value: "قيد المراجعة ⏳", inline: true },
+      { name: "💬 سبب طلب الإعفاء", value: `**${reasonText}**`, inline: false }
+    )
+    .setTimestamp();
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`snaifer_ex_approve:${member.id}`)
+      .setLabel("قبول الإعفاء وفك السجن")
+      .setEmoji("✅")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`snaifer_ex_reject:${member.id}`)
+      .setLabel("رفض الإعفاء")
+      .setEmoji("❌")
+      .setStyle(ButtonStyle.Danger)
+  );
+
+  await targetChannel.send({ embeds: [embed], components: [row] }).catch(() => {});
+
+  return replyFn({
+    content: "✅ تم إرسال طلب الإعفاء للإدارة بنجاح، انتظر مراجعته.",
+    ephemeral: true,
+  });
 }
 
 export async function handleAutoJailMessage(message) {
@@ -318,13 +561,9 @@ export async function handleAutoJailMessage(message) {
     message.member ||
     (await message.guild.members.fetch(message.author.id).catch(() => null));
 
+  const reason = `سجن تلقائي بسبب الكلمة: ${matched}`;
   if (member && !isProtectedTarget(member, message.guild)) {
-    await applyJailToMember(
-      message.guild,
-      member,
-      cfg,
-      `سجن تلقائي بسبب الكلمة: ${matched}`
-    );
+    await applyJailToMember(message.guild, member, cfg, reason, null);
   }
 
   await message.delete().catch(() => {});
@@ -340,181 +579,397 @@ export async function handleAutoJailMessage(message) {
 export async function handleSnaiferModInteraction(interaction) {
   if (!interaction?.guild) return false;
 
-  if (interaction.isButton() && interaction.customId.startsWith("snaifer_mod_")) {
-    if (!hasModPerm(interaction.member, PermissionFlagsBits.ModerateMembers, interaction.guild)) {
-      await interaction.reply({ content: "❌ ما عندك صلاحية استخدام اللوحة.", ephemeral: true });
-      return true;
-    }
-
+  if (interaction.isButton()) {
     const cfg = getJailConfig(interaction.guild.id);
 
-    if (interaction.customId === "snaifer_mod_toggle_auto") {
-      cfg.autoJailEnabled = !cfg.autoJailEnabled;
-      saveJailConfig(interaction.guild.id, cfg);
-      await interaction.update({
-        embeds: [buildModPanelEmbed(interaction.guild)],
-        components: buildModPanelComponents(interaction.guild),
-      });
+    if (interaction.customId === "snaifer_exemption_open") {
+      const modal = new ModalBuilder()
+        .setCustomId("snaifer_modal_exemption")
+        .setTitle("تقديم طلب إعفاء من صيدنايا");
+
+      const reasonInput = new TextInputBuilder()
+        .setCustomId("exemption_reason")
+        .setLabel("اكتب سبب طلب الإعفاء")
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true);
+
+      modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
+      await interaction.showModal(modal);
       return true;
     }
 
-    if (interaction.customId === "snaifer_mod_clear_words") {
-      cfg.autoJailWords = [];
-      saveJailConfig(interaction.guild.id, cfg);
-      await interaction.update({
-        embeds: [buildModPanelEmbed(interaction.guild)],
-        components: buildModPanelComponents(interaction.guild),
-      });
-      return true;
+    if (
+      interaction.customId.startsWith("snaifer_ex_approve:") ||
+      interaction.customId.startsWith("snaifer_ex_reject:")
+    ) {
+      if (
+        !hasModPerm(
+          interaction.member,
+          PermissionFlagsBits.ModerateMembers,
+          interaction.guild
+        )
+      ) {
+        await interaction.reply({
+          content: "❌ هذا الإجراء مخصص للإدارة فقط.",
+          ephemeral: true,
+        });
+        return true;
+      }
+
+      const [actionPart, targetUserId] = interaction.customId.split(":");
+      const targetMember = await interaction.guild.members
+        .fetch(targetUserId)
+        .catch(() => null);
+
+      if (actionPart === "snaifer_ex_approve") {
+        if (targetMember) {
+          await releaseJailFromMember(
+            interaction.guild,
+            targetMember,
+            cfg,
+            `قبول طلب الإعفاء بواسطة ${interaction.user.tag}`
+          );
+        }
+        await interaction.update({
+          content: `✅ تم **قبول الإعفاء** وفك سجن <@${targetUserId}> بواسطة ${interaction.user}.`,
+          components: [],
+        });
+        return true;
+      }
+
+      if (actionPart === "snaifer_ex_reject") {
+        await interaction.update({
+          content: `❌ تم **رفض الإعفاء** للعضو <@${targetUserId}> بواسطة ${interaction.user}.`,
+          components: [],
+        });
+        return true;
+      }
     }
 
-    const actionMap = {
-      snaifer_mod_jail: { id: "snaifer_modal_jail", title: "سجن عضو", targetLabel: "آيدي أو منشن العضو", extraLabel: "السبب (اختياري)" },
-      snaifer_mod_unjail: { id: "snaifer_modal_unjail", title: "فك سجن عضو", targetLabel: "آيدي أو منشن العضو", extraLabel: "السبب (اختياري)" },
-      snaifer_mod_timeout: { id: "snaifer_modal_timeout", title: "إعطاء تايم أوت", targetLabel: "آيدي أو منشن العضو", extraLabel: "المدة (مثال: 10m أو 1h)" },
-      snaifer_mod_warn: { id: "snaifer_modal_warn", title: "تحذير عضو", targetLabel: "آيدي أو منشن العضو", extraLabel: "سبب التحذير" },
-      snaifer_mod_kick: { id: "snaifer_modal_kick", title: "طرد عضو", targetLabel: "آيدي أو منشن العضو", extraLabel: "السبب (اختياري)" },
-      snaifer_mod_ban: { id: "snaifer_modal_ban", title: "حظر عضو (باند)", targetLabel: "آيدي أو منشن العضو", extraLabel: "السبب (اختياري)" },
-      snaifer_mod_set_jail: { id: "snaifer_modal_set_jail", title: "إعداد السجن", targetLabel: "آيدي رتبة السجن", extraLabel: "آيدي روم السجن (اختياري)" },
-      snaifer_mod_add_word: { id: "snaifer_modal_add_word", title: "إضافة كلمة سجن تلقائي", targetLabel: "الكلمة الممنوعة", extraLabel: "ملاحظة (اختياري)" },
-    };
+    if (interaction.customId.startsWith("snaifer_mod_")) {
+      if (
+        !hasModPerm(
+          interaction.member,
+          PermissionFlagsBits.ModerateMembers,
+          interaction.guild
+        )
+      ) {
+        await interaction.reply({
+          content: "❌ ما عندك صلاحية استخدام اللوحة.",
+          ephemeral: true,
+        });
+        return true;
+      }
 
-    const meta = actionMap[interaction.customId];
-    if (!meta) return false;
+      if (interaction.customId === "snaifer_mod_create_rooms") {
+        if (
+          !hasModPerm(
+            interaction.member,
+            PermissionFlagsBits.ManageChannels,
+            interaction.guild
+          )
+        ) {
+          await interaction.reply({
+            content: "❌ تحتاج صلاحية إدارة الرومات لإنشاء صيدنايا والإعفاء.",
+            ephemeral: true,
+          });
+          return true;
+        }
 
-    const modal = new ModalBuilder().setCustomId(meta.id).setTitle(meta.title);
-    const input1 = new TextInputBuilder()
-      .setCustomId("mod_input_1")
-      .setLabel(meta.targetLabel)
-      .setStyle(TextInputStyle.Short)
-      .setRequired(true);
+        const { jailRole, jailChannel, exemptionChannel } =
+          await setupSaidnayaAndExemptionRooms(interaction.guild, cfg);
 
-    const input2 = new TextInputBuilder()
-      .setCustomId("mod_input_2")
-      .setLabel(meta.extraLabel)
-      .setStyle(TextInputStyle.Short)
-      .setRequired(false);
+        await interaction.reply({
+          content:
+            `✅ تم تجهيز الرومات والرتبة:\n` +
+            `• روم صيدنايا: ${jailChannel ? `<#${jailChannel.id}>` : "غير متاح"}\n` +
+            `• روم الإعفاء: ${exemptionChannel ? `<#${exemptionChannel.id}>` : "غير متاح"}\n` +
+            `• رتبة السجن: ${jailRole ? `<@&${jailRole.id}>` : "غير متاح"}`,
+          ephemeral: true,
+        });
+        return true;
+      }
 
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(input1),
-      new ActionRowBuilder().addComponents(input2)
-    );
+      if (interaction.customId === "snaifer_mod_toggle_auto") {
+        cfg.autoJailEnabled = !cfg.autoJailEnabled;
+        saveJailConfig(interaction.guild.id, cfg);
+        await interaction.update({
+          embeds: [buildModPanelEmbed(interaction.guild)],
+          components: buildModPanelComponents(interaction.guild),
+        });
+        return true;
+      }
 
-    await interaction.showModal(modal);
-    return true;
+      if (interaction.customId === "snaifer_mod_clear_words") {
+        cfg.autoJailWords = [];
+        saveJailConfig(interaction.guild.id, cfg);
+        await interaction.update({
+          embeds: [buildModPanelEmbed(interaction.guild)],
+          components: buildModPanelComponents(interaction.guild),
+        });
+        return true;
+      }
+
+      const actionMap = {
+        snaifer_mod_jail: {
+          id: "snaifer_modal_jail",
+          title: "سجن عضو في صيدنايا",
+          targetLabel: "آيدي أو منشن العضو",
+          extraLabel: "السبب أو رقم (1-4): 1قذف 2إعلان 3سبام 4قوانين",
+        },
+        snaifer_mod_unjail: {
+          id: "snaifer_modal_unjail",
+          title: "فك سجن عضو",
+          targetLabel: "آيدي أو منشن العضو",
+          extraLabel: "السبب (اختياري)",
+        },
+        snaifer_mod_timeout: {
+          id: "snaifer_modal_timeout",
+          title: "إعطاء تايم أوت",
+          targetLabel: "آيدي أو منشن العضو",
+          extraLabel: "المدة (مثال: 10m أو 1h)",
+        },
+        snaifer_mod_warn: {
+          id: "snaifer_modal_warn",
+          title: "تحذير عضو",
+          targetLabel: "آيدي أو منشن العضو",
+          extraLabel: "سبب التحذير",
+        },
+        snaifer_mod_kick: {
+          id: "snaifer_modal_kick",
+          title: "طرد عضو",
+          targetLabel: "آيدي أو منشن العضو",
+          extraLabel: "السبب (اختياري)",
+        },
+        snaifer_mod_ban: {
+          id: "snaifer_modal_ban",
+          title: "حظر عضو (باند)",
+          targetLabel: "آيدي أو منشن العضو",
+          extraLabel: "السبب (اختياري)",
+        },
+        snaifer_mod_set_jail: {
+          id: "snaifer_modal_set_jail",
+          title: "إعداد السجن وصيدنايا",
+          targetLabel: "آيدي رتبة السجن",
+          extraLabel: "آيدي روم صيدنايا (اختياري)",
+        },
+        snaifer_mod_add_word: {
+          id: "snaifer_modal_add_word",
+          title: "إضافة كلمة سجن تلقائي",
+          targetLabel: "الكلمة الممنوعة",
+          extraLabel: "ملاحظة (اختياري)",
+        },
+      };
+
+      const meta = actionMap[interaction.customId];
+      if (!meta) return false;
+
+      const modal = new ModalBuilder().setCustomId(meta.id).setTitle(meta.title);
+      const input1 = new TextInputBuilder()
+        .setCustomId("mod_input_1")
+        .setLabel(meta.targetLabel)
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      const input2 = new TextInputBuilder()
+        .setCustomId("mod_input_2")
+        .setLabel(meta.extraLabel)
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false);
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(input1),
+        new ActionRowBuilder().addComponents(input2)
+      );
+
+      await interaction.showModal(modal);
+      return true;
+    }
   }
 
-  if (interaction.isModalSubmit() && interaction.customId.startsWith("snaifer_modal_")) {
-    const val1 = interaction.fields.getTextInputValue("mod_input_1").trim();
-    const val2 = interaction.fields.getTextInputValue("mod_input_2")?.trim() || "بدون سبب";
+  if (interaction.isModalSubmit()) {
     const cfg = getJailConfig(interaction.guild.id);
 
-    if (interaction.customId === "snaifer_modal_add_word") {
-      if (val1 && !cfg.autoJailWords.includes(val1)) {
-        cfg.autoJailWords.push(val1);
+    if (interaction.customId === "snaifer_modal_exemption") {
+      const reasonText =
+        interaction.fields.getTextInputValue("exemption_reason").trim() ||
+        "طلب إعفاء";
+
+      await submitExemptionRequest(
+        interaction.guild,
+        interaction.member,
+        cfg,
+        reasonText,
+        (payload) => interaction.reply(payload)
+      );
+      return true;
+    }
+
+    if (interaction.customId.startsWith("snaifer_modal_")) {
+      const val1 = interaction.fields.getTextInputValue("mod_input_1").trim();
+      const val2 =
+        interaction.fields.getTextInputValue("mod_input_2")?.trim() || "بدون سبب";
+
+      if (interaction.customId === "snaifer_modal_add_word") {
+        if (val1 && !cfg.autoJailWords.includes(val1)) {
+          cfg.autoJailWords.push(val1);
+          saveJailConfig(interaction.guild.id, cfg);
+        }
+        await interaction.update({
+          embeds: [buildModPanelEmbed(interaction.guild)],
+          components: buildModPanelComponents(interaction.guild),
+        });
+        return true;
+      }
+
+      if (interaction.customId === "snaifer_modal_set_jail") {
+        const roleId = parseId(val1);
+        const channelId = val2 && val2 !== "بدون سبب" ? parseId(val2) : null;
+        if (roleId && interaction.guild.roles.cache.has(roleId)) cfg.jailRoleId = roleId;
+        if (channelId && interaction.guild.channels.cache.has(channelId))
+          cfg.jailChannelId = channelId;
         saveJailConfig(interaction.guild.id, cfg);
-      }
-      await interaction.update({
-        embeds: [buildModPanelEmbed(interaction.guild)],
-        components: buildModPanelComponents(interaction.guild),
-      });
-      return true;
-    }
 
-    if (interaction.customId === "snaifer_modal_set_jail") {
-      const roleId = parseUserId(val1);
-      const channelId = val2 && val2 !== "بدون سبب" ? parseUserId(val2) : null;
-      if (roleId && interaction.guild.roles.cache.has(roleId)) cfg.jailRoleId = roleId;
-      if (channelId && interaction.guild.channels.cache.has(channelId)) cfg.jailChannelId = channelId;
-      saveJailConfig(interaction.guild.id, cfg);
+        await interaction.update({
+          embeds: [buildModPanelEmbed(interaction.guild)],
+          components: buildModPanelComponents(interaction.guild),
+        });
+        return true;
+      }
 
-      await interaction.update({
-        embeds: [buildModPanelEmbed(interaction.guild)],
-        components: buildModPanelComponents(interaction.guild),
-      });
-      return true;
-    }
+      const userId = parseId(val1);
+      const member = await interaction.guild.members.fetch(userId).catch(() => null);
 
-    const userId = parseUserId(val1);
-    const member = await interaction.guild.members.fetch(userId).catch(() => null);
+      if (interaction.customId === "snaifer_modal_jail") {
+        if (!member) {
+          await interaction.reply({
+            content: "❌ لم يتم العثور على العضو.",
+            ephemeral: true,
+          });
+          return true;
+        }
+        if (isProtectedTarget(member, interaction.guild)) {
+          await interaction.reply({
+            content: "❌ لا يمكن سجن الأونر.",
+            ephemeral: true,
+          });
+          return true;
+        }
+        const reason = resolveJailReason(val2);
+        await applyJailToMember(
+          interaction.guild,
+          member,
+          cfg,
+          reason,
+          interaction.user.id
+        );
+        await interaction.reply({
+          content: `🔒 تم سجن ${member} في صيدنايا | السبب: **${reason}**`,
+        });
+        return true;
+      }
 
-    if (interaction.customId === "snaifer_modal_jail") {
-      if (!member) {
-        await interaction.reply({ content: "❌ لم يتم العثور على العضو.", ephemeral: true });
+      if (interaction.customId === "snaifer_modal_unjail") {
+        if (!member) {
+          await interaction.reply({
+            content: "❌ لم يتم العثور على العضو.",
+            ephemeral: true,
+          });
+          return true;
+        }
+        await releaseJailFromMember(interaction.guild, member, cfg, val2);
+        await interaction.reply({
+          content: `🔓 تم فك سجن ${member} واسترجاع رولاتة.`,
+        });
         return true;
       }
-      if (isProtectedTarget(member, interaction.guild)) {
-        await interaction.reply({ content: "❌ لا يمكن سجن الأونر.", ephemeral: true });
-        return true;
-      }
-      await applyJailToMember(interaction.guild, member, cfg, val2);
-      await interaction.reply({ content: `🔒 تم سجن ${member} | السبب: **${val2}**` });
-      return true;
-    }
 
-    if (interaction.customId === "snaifer_modal_unjail") {
-      if (!member) {
-        await interaction.reply({ content: "❌ لم يتم العثور على العضو.", ephemeral: true });
+      if (interaction.customId === "snaifer_modal_timeout") {
+        if (!member) {
+          await interaction.reply({
+            content: "❌ لم يتم العثور على العضو.",
+            ephemeral: true,
+          });
+          return true;
+        }
+        if (isProtectedTarget(member, interaction.guild)) {
+          await interaction.reply({
+            content: "❌ لا يمكن إعطاء تايم أوت للأونر.",
+            ephemeral: true,
+          });
+          return true;
+        }
+        const ms = parseDurationMs(val2 === "بدون سبب" ? "10m" : val2);
+        await member.timeout(ms, "تايم أوت من لوحة سنيفر");
+        await interaction.reply({
+          content: `⏳ تم إعطاء ${member} تايم أوت.`,
+        });
         return true;
       }
-      await releaseJailFromMember(interaction.guild, member, cfg, val2);
-      await interaction.reply({ content: `🔓 تم فك سجن ${member} واسترجاع رولاتة.` });
-      return true;
-    }
 
-    if (interaction.customId === "snaifer_modal_timeout") {
-      if (!member) {
-        await interaction.reply({ content: "❌ لم يتم العثور على العضو.", ephemeral: true });
+      if (interaction.customId === "snaifer_modal_warn") {
+        if (!member) {
+          await interaction.reply({
+            content: "❌ لم يتم العثور على العضو.",
+            ephemeral: true,
+          });
+          return true;
+        }
+        if (isProtectedTarget(member, interaction.guild)) {
+          await interaction.reply({
+            content: "❌ لا يمكن تحذير الأونر.",
+            ephemeral: true,
+          });
+          return true;
+        }
+        const count = addUserWarning(
+          interaction.guild.id,
+          member.id,
+          val2,
+          interaction.user.id
+        );
+        await interaction.reply({
+          content: `⚠️ تم تحذير ${member} (الإجمالي: **${count}**) | السبب: **${val2}**`,
+        });
         return true;
       }
-      if (isProtectedTarget(member, interaction.guild)) {
-        await interaction.reply({ content: "❌ لا يمكن إعطاء تايم أوت للأونر.", ephemeral: true });
-        return true;
-      }
-      const ms = parseDurationMs(val2 === "بدون سبب" ? "10m" : val2);
-      await member.timeout(ms, "تايم أوت من لوحة سنيفر");
-      await interaction.reply({ content: `⏳ تم إعطاء ${member} تايم أوت.` });
-      return true;
-    }
 
-    if (interaction.customId === "snaifer_modal_warn") {
-      if (!member) {
-        await interaction.reply({ content: "❌ لم يتم العثور على العضو.", ephemeral: true });
+      if (interaction.customId === "snaifer_modal_kick") {
+        if (!member) {
+          await interaction.reply({
+            content: "❌ لم يتم العثور على العضو.",
+            ephemeral: true,
+          });
+          return true;
+        }
+        if (isProtectedTarget(member, interaction.guild)) {
+          await interaction.reply({
+            content: "❌ لا يمكن طرد الأونر.",
+            ephemeral: true,
+          });
+          return true;
+        }
+        await member.kick(val2);
+        await interaction.reply({
+          content: `👢 تم طرد ${member} | السبب: **${val2}**`,
+        });
         return true;
       }
-      if (isProtectedTarget(member, interaction.guild)) {
-        await interaction.reply({ content: "❌ لا يمكن تحذير الأونر.", ephemeral: true });
-        return true;
-      }
-      const count = addUserWarning(interaction.guild.id, member.id, val2, interaction.user.id);
-      await interaction.reply({
-        content: `⚠️ تم تحذير ${member} (الإجمالي: **${count}**) | السبب: **${val2}**`,
-      });
-      return true;
-    }
 
-    if (interaction.customId === "snaifer_modal_kick") {
-      if (!member) {
-        await interaction.reply({ content: "❌ لم يتم العثور على العضو.", ephemeral: true });
+      if (interaction.customId === "snaifer_modal_ban") {
+        if (isOwnerUser(userId, interaction.guild)) {
+          await interaction.reply({
+            content: "❌ لا يمكن حظر الأونر.",
+            ephemeral: true,
+          });
+          return true;
+        }
+        await interaction.guild.members.ban(userId, { reason: val2 });
+        await interaction.reply({
+          content: `🔨 تم حظر العضو \`${userId}\` | السبب: **${val2}**`,
+        });
         return true;
       }
-      if (isProtectedTarget(member, interaction.guild)) {
-        await interaction.reply({ content: "❌ لا يمكن طرد الأونر.", ephemeral: true });
-        return true;
-      }
-      await member.kick(val2);
-      await interaction.reply({ content: `👢 تم طرد ${member} | السبب: **${val2}**` });
-      return true;
-    }
-
-    if (interaction.customId === "snaifer_modal_ban") {
-      if (isOwnerUser(userId, interaction.guild)) {
-        await interaction.reply({ content: "❌ لا يمكن حظر الأونر.", ephemeral: true });
-        return true;
-      }
-      await interaction.guild.members.ban(userId, { reason: val2 });
-      await interaction.reply({ content: `🔨 تم حظر العضو \`${userId}\` | السبب: **${val2}**` });
-      return true;
     }
   }
 
@@ -524,13 +979,19 @@ export async function handleSnaiferModInteraction(interaction) {
 export default {
   data: new SlashCommandBuilder()
     .setName("modpanel")
-    .setDescription("لوحة الإشراف والسجن وأوامر الإدارة"),
+    .setDescription("لوحة الإشراف وصيدنايا وأوامر الإدارة"),
   name: "modpanel",
   aliases: [
     "اوامر_سجن",
     "سجن_اعداد",
     "اعداد_السجن",
     "إعداد_السجن",
+    "انشاء_السجن",
+    "إنشاء_السجن",
+    "صيدنايا",
+    "اعفاء",
+    "إعفاء",
+    "طلب_اعفاء",
     "سجن",
     "السجن",
     "فك_سجن",
@@ -554,7 +1015,7 @@ export default {
     "اشراف",
     "الاشراف",
   ],
-  description: "لوحة الإشراف والسجن وأوامر الإدارة",
+  description: "لوحة الإشراف وصيدنايا وأوامر الإدارة",
   async execute(messageOrInteraction, args = []) {
     const guild = messageOrInteraction.guild;
     if (!guild) return;
@@ -564,8 +1025,12 @@ export default {
       messageOrInteraction.member ||
       (actor ? await guild.members.fetch(actor.id).catch(() => null) : null);
 
-    const content = messageOrInteraction.content ? String(messageOrInteraction.content).trim() : "";
-    const firstWord = content ? content.split(/\s+/)[0].replace(/^[\$!]+/, "") : "modpanel";
+    const content = messageOrInteraction.content
+      ? String(messageOrInteraction.content).trim()
+      : "";
+    const firstWord = content
+      ? content.split(/\s+/)[0].replace(/^[\$!]+/, "")
+      : "modpanel";
     const cfg = getJailConfig(guild.id);
 
     const reply = async (payload) => {
@@ -576,7 +1041,10 @@ export default {
 
     if (["اوامر_سجن", "اشراف", "الاشراف", "modpanel"].includes(firstWord)) {
       if (!hasModPerm(member, PermissionFlagsBits.ModerateMembers, guild)) {
-        return reply({ content: "❌ ما عندك صلاحية فتح لوحة الإشراف.", ephemeral: true });
+        return reply({
+          content: "❌ ما عندك صلاحية فتح لوحة الإشراف.",
+          ephemeral: true,
+        });
       }
       return reply({
         embeds: [buildModPanelEmbed(guild)],
@@ -584,17 +1052,50 @@ export default {
       });
     }
 
+    if (["انشاء_السجن", "إنشاء_السجن", "صيدنايا"].includes(firstWord)) {
+      if (!hasModPerm(member, PermissionFlagsBits.ManageChannels, guild)) {
+        return reply({
+          content: "❌ تحتاج صلاحية إدارة الرومات لإنشاء صيدنايا والإعفاء.",
+          ephemeral: true,
+        });
+      }
+      const { jailRole, jailChannel, exemptionChannel } =
+        await setupSaidnayaAndExemptionRooms(guild, cfg);
+      return reply({
+        content:
+          `✅ تم إنشاء وتجهيز النظام:\n` +
+          `• روم صيدنايا: ${jailChannel ? `<#${jailChannel.id}>` : "غير متاح"}\n` +
+          `• روم الإعفاء: ${exemptionChannel ? `<#${exemptionChannel.id}>` : "غير متاح"}\n` +
+          `• رتبة السجن: ${jailRole ? `<@&${jailRole.id}>` : "غير متاح"}`,
+      });
+    }
+
+    if (["اعفاء", "إعفاء", "طلب_اعفاء"].includes(firstWord)) {
+      if (!member) return;
+      const reasonText = args.join(" ").trim() || "طلب إعفاء من السجن";
+      return submitExemptionRequest(guild, member, cfg, reasonText, reply);
+    }
+
     if (["سجن_اعداد", "اعداد_السجن", "إعداد_السجن"].includes(firstWord)) {
       if (!hasModPerm(member, PermissionFlagsBits.Administrator, guild)) {
-        return reply({ content: "❌ هذا الأمر للأونر والإدارة العليا فقط.", ephemeral: true });
+        return reply({
+          content: "❌ هذا الأمر للأونر والإدارة العليا فقط.",
+          ephemeral: true,
+        });
       }
-      const roleId = parseUserId(args[0]);
-      const channelId = parseUserId(args[1]);
+      const roleId = parseId(args[0]);
+      const jailChId = parseId(args[1]);
+      const exChId = parseId(args[2]);
       if (roleId && guild.roles.cache.has(roleId)) cfg.jailRoleId = roleId;
-      if (channelId && guild.channels.cache.has(channelId)) cfg.jailChannelId = channelId;
+      if (jailChId && guild.channels.cache.has(jailChId)) cfg.jailChannelId = jailChId;
+      if (exChId && guild.channels.cache.has(exChId)) cfg.exemptionChannelId = exChId;
       saveJailConfig(guild.id, cfg);
       return reply({
-        content: `✅ تم تحديث إعدادات السجن — الرتبة: ${cfg.jailRoleId ? `<@&${cfg.jailRoleId}>` : "غير محدد"} | الروم: ${cfg.jailChannelId ? `<#${cfg.jailChannelId}>` : "غير محدد"}`,
+        content:
+          `✅ تم تحديث إعدادات السجن:\n` +
+          `• الرتبة: ${cfg.jailRoleId ? `<@&${cfg.jailRoleId}>` : "غير محدد"}\n` +
+          `• روم صيدنايا: ${cfg.jailChannelId ? `<#${cfg.jailChannelId}>` : "غير محدد"}\n` +
+          `• روم الإعفاء: ${cfg.exemptionChannelId ? `<#${cfg.exemptionChannelId}>` : "غير محدد"}`,
       });
     }
 
@@ -602,35 +1103,47 @@ export default {
       if (!hasModPerm(member, PermissionFlagsBits.ModerateMembers, guild)) {
         return reply({ content: "❌ ما عندك صلاحية السجن.", ephemeral: true });
       }
-      const targetId = parseUserId(args[0]);
-      const reason = args.slice(1).join(" ") || "مخالفة القوانين";
+      const targetId = parseId(args[0]);
+      const reason = resolveJailReason(args.slice(1).join(" "));
       const target = await guild.members.fetch(targetId).catch(() => null);
-      if (!target) return reply({ content: "❌ حدد عضو صحيح: `سجن @عضو [السبب]`" });
+      if (!target) {
+        return reply({
+          content:
+            "❌ حدد عضو صحيح: `سجن @عضو [السبب أو 1-4]`\nالأسباب: `1` قذف/سب • `2` إعلانات • `3` سبام • `4` مخالفة القوانين",
+        });
+      }
       if (isProtectedTarget(target, guild)) {
         return reply({ content: "❌ لا يمكن سجن الأونر." });
       }
 
-      await applyJailToMember(guild, target, cfg, reason);
-      return reply({ content: `🔒 تم سجن ${target} | السبب: **${reason}**` });
+      await applyJailToMember(guild, target, cfg, reason, actor?.id || null);
+      return reply({
+        content: `🔒 تم سجن ${target} في صيدنايا | السبب: **${reason}**`,
+      });
     }
 
     if (["فك_سجن", "افراج"].includes(firstWord)) {
       if (!hasModPerm(member, PermissionFlagsBits.ModerateMembers, guild)) {
-        return reply({ content: "❌ ما عندك صلاحية فك السجن.", ephemeral: true });
+        return reply({
+          content: "❌ ما عندك صلاحية فك السجن.",
+          ephemeral: true,
+        });
       }
-      const targetId = parseUserId(args[0]);
+      const targetId = parseId(args[0]);
       const target = await guild.members.fetch(targetId).catch(() => null);
       if (!target) return reply({ content: "❌ حدد عضو صحيح: `فك_سجن @عضو`" });
 
       await releaseJailFromMember(guild, target, cfg, "فك السجن");
-      return reply({ content: `🔓 تم الإفراج عن ${target} واسترجاع رولاتة.` });
+      return reply({
+        content: `🔓 تم الإفراج عن ${target} واسترجاع رولاتة.`,
+      });
     }
 
     if (["كتم", "اسكت", "انبح"].includes(firstWord)) {
       if (!hasModPerm(member, PermissionFlagsBits.ModerateMembers, guild)) {
         return reply({ content: "❌ ما عندك صلاحية الكتم.", ephemeral: true });
       }
-      const targetId = parseUserId(args[0]);
+      const targetId = parseId(args[0]);
       const target = await guild.members.fetch(targetId).catch(() => null);
       if (!target) return reply({ content: "❌ حدد عضو صحيح: `كتم @عضو [المدة]`" });
       if (isProtectedTarget(target, guild)) {
@@ -643,9 +1156,12 @@ export default {
 
     if (["تكلم"].includes(firstWord)) {
       if (!hasModPerm(member, PermissionFlagsBits.ModerateMembers, guild)) {
-        return reply({ content: "❌ ما عندك صلاحية فك الكتم.", ephemeral: true });
+        return reply({
+          content: "❌ ما عندك صلاحية فك الكتم.",
+          ephemeral: true,
+        });
       }
-      const targetId = parseUserId(args[0]);
+      const targetId = parseId(args[0]);
       const target = await guild.members.fetch(targetId).catch(() => null);
       if (!target) return reply({ content: "❌ حدد عضو صحيح: `تكلم @عضو`" });
       await target.timeout(null, "فك الكتم").catch(() => {});
@@ -656,7 +1172,7 @@ export default {
       if (!hasModPerm(member, PermissionFlagsBits.KickMembers, guild)) {
         return reply({ content: "❌ ما عندك صلاحية الطرد.", ephemeral: true });
       }
-      const targetId = parseUserId(args[0]);
+      const targetId = parseId(args[0]);
       const reason = args.slice(1).join(" ") || "بدون سبب";
       const target = await guild.members.fetch(targetId).catch(() => null);
       if (!target) return reply({ content: "❌ حدد عضو صحيح: `طرد @عضو [السبب]`" });
@@ -671,21 +1187,28 @@ export default {
       if (!hasModPerm(member, PermissionFlagsBits.BanMembers, guild)) {
         return reply({ content: "❌ ما عندك صلاحية الباند.", ephemeral: true });
       }
-      const targetId = parseUserId(args[0]);
+      const targetId = parseId(args[0]);
       const reason = args.slice(1).join(" ") || "بدون سبب";
-      if (!targetId) return reply({ content: "❌ حدد عضو أو آيدي: `باند @عضو [السبب]`" });
+      if (!targetId) {
+        return reply({ content: "❌ حدد عضو أو آيدي: `باند @عضو [السبب]`" });
+      }
       if (isOwnerUser(targetId, guild)) {
         return reply({ content: "❌ لا يمكن حظر الأونر." });
       }
       await guild.members.ban(targetId, { reason }).catch(() => {});
-      return reply({ content: `🔨 تم حظر \`${targetId}\` | السبب: **${reason}**` });
+      return reply({
+        content: `🔨 تم حظر \`${targetId}\` | السبب: **${reason}**`,
+      });
     }
 
     if (["لاباند"].includes(firstWord)) {
       if (!hasModPerm(member, PermissionFlagsBits.BanMembers, guild)) {
-        return reply({ content: "❌ ما عندك صلاحية فك الباند.", ephemeral: true });
+        return reply({
+          content: "❌ ما عندك صلاحية فك الباند.",
+          ephemeral: true,
+        });
       }
-      const targetId = parseUserId(args[0]);
+      const targetId = parseId(args[0]);
       if (!targetId) return reply({ content: "❌ حدد آيدي العضو: `لاباند ID`" });
       await guild.members.unban(targetId, "فك الباند").catch(() => {});
       return reply({ content: `✅ تم فك الحظر عن \`${targetId}\`.` });
@@ -693,9 +1216,12 @@ export default {
 
     if (["تايم"].includes(firstWord)) {
       if (!hasModPerm(member, PermissionFlagsBits.ModerateMembers, guild)) {
-        return reply({ content: "❌ ما عندك صلاحية التايم أوت.", ephemeral: true });
+        return reply({
+          content: "❌ ما عندك صلاحية التايم أوت.",
+          ephemeral: true,
+        });
       }
-      const targetId = parseUserId(args[0]);
+      const targetId = parseId(args[0]);
       const target = await guild.members.fetch(targetId).catch(() => null);
       if (!target) return reply({ content: "❌ حدد عضو صحيح: `تايم @عضو [10m]`" });
       if (isProtectedTarget(target, guild)) {
@@ -708,9 +1234,12 @@ export default {
 
     if (["لاتايم"].includes(firstWord)) {
       if (!hasModPerm(member, PermissionFlagsBits.ModerateMembers, guild)) {
-        return reply({ content: "❌ ما عندك صلاحية إزالة التايم أوت.", ephemeral: true });
+        return reply({
+          content: "❌ ما عندك صلاحية إزالة التايم أوت.",
+          ephemeral: true,
+        });
       }
-      const targetId = parseUserId(args[0]);
+      const targetId = parseId(args[0]);
       const target = await guild.members.fetch(targetId).catch(() => null);
       if (!target) return reply({ content: "❌ حدد عضو صحيح: `لاتايم @عضو`" });
       await target.timeout(null, "إزالة التايم أوت").catch(() => {});
@@ -719,46 +1248,68 @@ export default {
 
     if (["تحذير"].includes(firstWord)) {
       if (!hasModPerm(member, PermissionFlagsBits.ModerateMembers, guild)) {
-        return reply({ content: "❌ ما عندك صلاحية التحذير.", ephemeral: true });
+        return reply({
+          content: "❌ ما عندك صلاحية التحذير.",
+          ephemeral: true,
+        });
       }
-      const targetId = parseUserId(args[0]);
+      const targetId = parseId(args[0]);
       const reason = args.slice(1).join(" ") || "مخالفة القوانين";
       const target = await guild.members.fetch(targetId).catch(() => null);
-      if (!target) return reply({ content: "❌ حدد عضو صحيح: `تحذير @عضو [السبب]`" });
+      if (!target) {
+        return reply({ content: "❌ حدد عضو صحيح: `تحذير @عضو [السبب]`" });
+      }
       if (isProtectedTarget(target, guild)) {
         return reply({ content: "❌ لا يمكن تحذير الأونر." });
       }
       const count = addUserWarning(guild.id, target.id, reason, actor?.id || null);
-      return reply({ content: `⚠️ تم تحذير ${target} (الإجمالي: **${count}**) | السبب: **${reason}**` });
+      return reply({
+        content: `⚠️ تم تحذير ${target} (الإجمالي: **${count}**) | السبب: **${reason}**`,
+      });
     }
 
     if (["تحذيرات"].includes(firstWord)) {
       if (!hasModPerm(member, PermissionFlagsBits.ModerateMembers, guild)) {
-        return reply({ content: "❌ ما عندك صلاحية عرض التحذيرات.", ephemeral: true });
+        return reply({
+          content: "❌ ما عندك صلاحية عرض التحذيرات.",
+          ephemeral: true,
+        });
       }
-      const targetId = parseUserId(args[0] || actor?.id);
+      const targetId = parseId(args[0] || actor?.id);
       const warns = getUserWarnings(guild.id, targetId);
       if (!warns.length) {
-        return reply({ content: `ℹ️ لا توجد تحذيرات مسجلة للعضو <@${targetId}>.` });
+        return reply({
+          content: `ℹ️ لا توجد تحذيرات مسجلة للعضو <@${targetId}>.`,
+        });
       }
       const list = warns
         .map((w, idx) => `${idx + 1}. **${w.reason}**`)
         .join("\n");
-      return reply({ content: `⚠️ تحذيرات <@${targetId}> (**${warns.length}**):\n${list}` });
+      return reply({
+        content: `⚠️ تحذيرات <@${targetId}> (**${warns.length}**):\n${list}`,
+      });
     }
 
     if (["مسح"].includes(firstWord)) {
       if (!hasModPerm(member, PermissionFlagsBits.ManageMessages, guild)) {
-        return reply({ content: "❌ ما عندك صلاحية مسح الرسائل.", ephemeral: true });
+        return reply({
+          content: "❌ ما عندك صلاحية مسح الرسائل.",
+          ephemeral: true,
+        });
       }
       const count = Math.min(Math.max(Number(args[0]) || 10, 1), 100);
-      const deleted = await messageOrInteraction.channel?.bulkDelete(count, true).catch(() => null);
+      const deleted = await messageOrInteraction.channel
+        ?.bulkDelete(count, true)
+        .catch(() => null);
       return reply({ content: `🧹 تم مسح **${deleted?.size ?? 0}** رسالة.` });
     }
 
     if (["قفل"].includes(firstWord)) {
       if (!hasModPerm(member, PermissionFlagsBits.ManageChannels, guild)) {
-        return reply({ content: "❌ ما عندك صلاحية قفل الروم.", ephemeral: true });
+        return reply({
+          content: "❌ ما عندك صلاحية قفل الروم.",
+          ephemeral: true,
+        });
       }
       await messageOrInteraction.channel?.permissionOverwrites
         .edit(guild.roles.everyone.id, { SendMessages: false })
@@ -768,7 +1319,10 @@ export default {
 
     if (["فتح"].includes(firstWord)) {
       if (!hasModPerm(member, PermissionFlagsBits.ManageChannels, guild)) {
-        return reply({ content: "❌ ما عندك صلاحية فتح الروم.", ephemeral: true });
+        return reply({
+          content: "❌ ما عندك صلاحية فتح الروم.",
+          ephemeral: true,
+        });
       }
       await messageOrInteraction.channel?.permissionOverwrites
         .edit(guild.roles.everyone.id, { SendMessages: true })

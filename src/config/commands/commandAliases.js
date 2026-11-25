@@ -4,15 +4,26 @@
  */
 
 export const commandAliases = {
-  // أوامر الإشراف الكاملة ونظام السجن
+// لوحة أوامر سنيفر
+    'اوامر_سنيفر': 'show',
+    'اظهار': 'show',
+    'إظهار': 'show',
+    'اوامر': 'show',
+    'الاوامر': 'show',
+
+    // أوامر الإشراف ونظام السجن
     'اشراف': 'modpanel',
     'الاشراف': 'modpanel',
     'مسح': 'modpanel',
     'كتم': 'modpanel',
+    'اسكت': 'modpanel',
     'تكلم': 'modpanel',
+    'انبح': 'modpanel',
     'باند': 'modpanel',
+    'تف': 'modpanel',
     'لاباند': 'modpanel',
     'طرد': 'modpanel',
+    'بنعالي': 'modpanel',
     'تايم': 'modpanel',
     'لاتايم': 'modpanel',
     'تحذير': 'modpanel',
@@ -21,9 +32,12 @@ export const commandAliases = {
     'فتح': 'modpanel',
     'سجن': 'modpanel',
     'السجن': 'modpanel',
+    'اوامر_سجن': 'modpanel',
     'سجن_اعداد': 'modpanel',
-    '': 'modpanel',
-    'افراج': 'modpanel',
+    'إعداد_السجن': 'modpanel',
+    'اعداد_السجن': 'modpanel',
+    'فك_سجن': 'modpanel',
+    'افراج': 'modpanel',    
 
 };
 

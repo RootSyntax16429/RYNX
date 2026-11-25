@@ -1,8 +1,5 @@
 import { Events } from "discord.js";
 import { logger } from "../utils/logger.js";
-import { getLevelingConfig, getUserLevelData } from "../services/leveling/leveling.js";
-import { addXp } from "../services/leveling/xpSystem.js";
-import { checkRateLimit } from "../utils/rateLimiter.js";
 import { parsePrefixCommand } from "../utils/prefixParser.js";
 import {
   supportsPrefixExecution,
@@ -31,9 +28,8 @@ import {
   isValidCountingMessage,
   recordCorrectCount,
 } from "../services/countingGameService.js";
-
-const MESSAGE_XP_RATE_LIMIT_ATTEMPTS = 12;
-const MESSAGE_XP_RATE_LIMIT_WINDOW_MS = 10000;
+import { handleAutoJailMessage } from "../commands/Moderation/modPanel.js";
+import { handleAutoTicketMessage } from "../commands/Tickets/createTicket.js";
 
 const NO_PREFIX_MOD_COMMANDS = new Set([
   "اوامر_سجن",
@@ -65,6 +61,14 @@ const NO_PREFIX_MOD_COMMANDS = new Set([
   "الاشراف",
 ]);
 
+const NO_PREFIX_TICKET_COMMANDS = new Set([
+  "انشاء_تذكره",
+  "انشاء_تذكرة",
+  "تذكره",
+  "تذكرة",
+  "تذاكر",
+]);
+
 export default {
   name: Events.MessageCreate,
   async execute(message, client) {
@@ -85,7 +89,13 @@ export default {
 
       await handlePrefixCommand(message, client);
 
-      await handleLeveling(message, client);
+      // فحص الكلمات التلقائية للسجن والتذاكر (نظام اللفلات معطّل بالكامل)
+      const autoJailed = await handleAutoJailMessage(message);
+      if (autoJailed) {
+        return;
+      }
+
+      await handleAutoTicketMessage(message);
     } catch (error) {
       logger.error("Error in messageCreate event:", error);
     }
@@ -114,6 +124,15 @@ async function handleDirectSnaiferCommands(message, client) {
       if (modCmd) {
         const args = parts.slice(1);
         await modCmd.execute(message, args, client);
+        return true;
+      }
+    }
+
+    if (NO_PREFIX_TICKET_COMMANDS.has(cleanedFirst)) {
+      const ticketCmd = client.commands?.get("create_ticket");
+      if (ticketCmd) {
+        const args = parts.slice(1);
+        await ticketCmd.execute(message, args, client);
         return true;
       }
     }
@@ -286,79 +305,5 @@ async function handleCountingGame(message, client) {
   } catch (error) {
     logger.error("Error handling counting game:", error);
     return false;
-  }
-}
-
-async function handleLeveling(message, client) {
-  try {
-    const rateLimitKey = `xp-event:${message.guild.id}:${message.author.id}`;
-    const canProcess = await checkRateLimit(
-      rateLimitKey,
-      MESSAGE_XP_RATE_LIMIT_ATTEMPTS,
-      MESSAGE_XP_RATE_LIMIT_WINDOW_MS
-    );
-    if (!canProcess) {
-      return;
-    }
-
-    const levelingConfig = await getLevelingConfig(client, message.guild.id);
-
-    if (!levelingConfig?.enabled) {
-      return;
-    }
-
-    if (levelingConfig.ignoredChannels?.includes(message.channel.id)) {
-      return;
-    }
-
-    if (levelingConfig.ignoredRoles?.length > 0) {
-      const member = await message.guild.members.fetch(message.author.id).catch(() => {
-        return null;
-      });
-      if (member && member.roles.cache.some((role) => levelingConfig.ignoredRoles.includes(role.id))) {
-        return;
-      }
-    }
-
-    if (levelingConfig.blacklistedUsers?.includes(message.author.id)) {
-      return;
-    }
-
-    if (!message.content || message.content.trim().length === 0) {
-      return;
-    }
-
-    const userData = await getUserLevelData(client, message.guild.id, message.author.id);
-
-    const cooldownTime = levelingConfig.xpCooldown || 60;
-    const now = Date.now();
-    const timeSinceLastMessage = now - (userData.lastMessage || 0);
-
-    if (timeSinceLastMessage < cooldownTime * 1000) {
-      return;
-    }
-
-    const minXP = levelingConfig.xpRange?.min || levelingConfig.xpPerMessage?.min || 15;
-    const maxXP = levelingConfig.xpRange?.max || levelingConfig.xpPerMessage?.max || 25;
-
-    const safeMinXP = Math.max(1, minXP);
-    const safeMaxXP = Math.max(safeMinXP, maxXP);
-
-    const xpToGive = Math.floor(Math.random() * (safeMaxXP - safeMinXP + 1)) + safeMinXP;
-
-    let finalXP = xpToGive;
-    if (levelingConfig.xpMultiplier && levelingConfig.xpMultiplier > 1) {
-      finalXP = Math.floor(finalXP * levelingConfig.xpMultiplier);
-    }
-
-    const result = await addXp(client, message.guild, message.member, finalXP);
-
-    if (result?.leveledUp) {
-      logger.info(
-        `${message.author.tag} leveled up to level ${result.level} in ${message.guild.name}`
-      );
-    }
-  } catch (error) {
-    logger.error("Error handling leveling for message:", error);
   }
 }

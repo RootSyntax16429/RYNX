@@ -20,7 +20,7 @@ import { isCollectorManagedComponent } from '../utils/collectorComponents.js';
 import { ResponseCoordinator } from '../utils/responseCoordinator.js';
 import { enforceDefaultCommandPermissions } from '../utils/permissionGuard.js';
 import { handleJailInteraction } from '../commands/Moderation/modPanel.js';
-import { handleSnaiferTicketButton } from "../commands/Tickets/ticket.js";
+import { handleSnaiferTicketButton } from '../commands/Tickets/ticket.js';
 
 const COMMAND_ERROR_SUBTYPES = {
   warn: 'warn_failed',
@@ -61,6 +61,10 @@ export default {
         ResponseCoordinator.attach(interaction);
 
         if (await handleJailInteraction(interaction)) {
+          return;
+        }
+
+        if (await handleSnaiferTicketButton(interaction)) {
           return;
         }
 

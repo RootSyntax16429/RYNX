@@ -300,20 +300,60 @@ async function applyJailToMember(
   reason = "مخالفة القوانين",
   moderatorId = null
 ) {
+  let jailRole = cfg.jailRoleId ? guild.roles.cache.get(cfg.jailRoleId) : null;
+
+  if (!jailRole) {
+    jailRole = await guild.roles
+      .create({
+        name: "سجين • صيدنايا",
+        color: "#5865F2",
+        reason: "إنشاء رتبة السجن تلقائياً عند السجن",
+      })
+      .catch((err) => {
+        console.error("[applyJailToMember] Failed creating jail role:", err);
+        return null;
+      });
+
+    if (jailRole) {
+      cfg.jailRoleId = jailRole.id;
+      saveJailConfig(guild.id, cfg);
+    }
+  }
+
+  if (!jailRole) {
+    return {
+      ok: false,
+      error: "تعذر إنشاء أو العثور على رتبة السجن (تأكد من صلاحية Manage Roles للبوت).",
+    };
+  }
+
+  const botMember = guild.members.me;
+  const botHighestPos = botMember?.roles?.highest?.position ?? 0;
+
+  if (jailRole.position >= botHighestPos) {
+    return {
+      ok: false,
+      error: `رتبة السجن (${jailRole.name}) أعلى أو مساوية لرتبة البوت. ارفع رتبة البوت فوق رتبة السجن.`,
+    };
+  }
+
   const key = `${guild.id}:${member.id}`;
   const previousRoles = member.roles.cache
-    .filter((r) => r.id !== guild.roles.everyone.id && r.id !== cfg.jailRoleId)
+    .filter((r) => r.id !== guild.roles.everyone.id && r.id !== jailRole.id)
     .map((r) => r.id);
 
   jailedMembers.set(key, previousRoles);
   writeJsonMap(JAIL_STORE_PATH, jailedMembers);
 
-  if (cfg.jailRoleId && guild.roles.cache.has(cfg.jailRoleId)) {
-    const jailRole = guild.roles.cache.get(cfg.jailRoleId);
-    const botHighestPos = guild.members.me?.roles?.highest?.position ?? 0;
-    if (jailRole && !jailRole.managed && jailRole.position < botHighestPos) {
-      await member.roles.set([cfg.jailRoleId], reason).catch(() => {});
-    }
+  try {
+    await member.roles.set([jailRole.id], reason);
+  } catch (err) {
+    console.error("[applyJailToMember] Failed member.roles.set:", err);
+    return {
+      ok: false,
+      error:
+        "البوت ما قدر يشيل أو يغير رولات العضو (تأكد إن رتبة البوت أعلى من رولات العضو وعنده Manage Roles).",
+    };
   }
 
   if (cfg.jailChannelId) {
@@ -346,6 +386,8 @@ async function applyJailToMember(
         .catch(() => {});
     }
   }
+
+  return { ok: true, jailRole };
 }
 
 async function releaseJailFromMember(guild, member, cfg, reason = "فك السجن") {
@@ -638,13 +680,21 @@ export async function handleSnaiferModInteraction(interaction) {
         return true;
       }
 
-      await applyJailToMember(
+      const result = await applyJailToMember(
         interaction.guild,
         member,
         cfg,
         chosenReason,
         interaction.user.id
       );
+
+      if (!result.ok) {
+        await interaction.update({
+          content: `❌ فشل السجن: ${result.error}`,
+          components: [],
+        });
+        return true;
+      }
 
       await interaction.update({
         content: `🔒 تم سجن ${member} في صيدنايا | السبب: **${chosenReason}**`,
@@ -958,13 +1008,20 @@ export async function handleSnaiferModInteraction(interaction) {
       }
 
       if (!cfg.jailReasons.length) {
-        await applyJailToMember(
+        const result = await applyJailToMember(
           interaction.guild,
           member,
           cfg,
           "مخالفة القوانين",
           interaction.user.id
         );
+        if (!result.ok) {
+          await interaction.reply({
+            content: `❌ فشل السجن: ${result.error}`,
+            ephemeral: true,
+          });
+          return true;
+        }
         await interaction.reply({
           content: `🔒 تم سجن ${member} في صيدنايا | السبب: **مخالفة القوانين**`,
         });
@@ -1317,15 +1374,23 @@ export default {
       const target = await guild.members.fetch(targetId).catch(() => null);
       if (!target) {
         return reply({
-          content:
-            "❌ حدد عضو صحيح: `سجن @عضو [رقم السبب أو نصه]`",
+          content: "❌ حدد عضو صحيح: `سجن @عضو [رقم السبب أو نصه]`",
         });
       }
       if (isProtectedTarget(target, guild)) {
         return reply({ content: "❌ لا يمكن سجن الأونر." });
       }
 
-      await applyJailToMember(guild, target, cfg, reason, actor?.id || null);
+      const result = await applyJailToMember(
+        guild,
+        target,
+        cfg,
+        reason,
+        actor?.id || null
+      );
+      if (!result.ok) {
+        return reply({ content: `❌ فشل السجن: ${result.error}` });
+      }
       return reply({
         content: `🔒 تم سجن ${target} في صيدنايا | السبب: **${reason}**`,
       });

@@ -29,8 +29,7 @@ import {
   recordCorrectCount,
 } from "../services/countingGameService.js";
 import { handleAutoJailMessage } from "../commands/Moderation/modPanel.js";
-import { handleAutoTicketMessage } from "../commands/Tickets/createTicket.js";
-
+import { handleAutoTicketMessage } from "../commands/Tickets/ticket.js";
 const NO_PREFIX_MOD_COMMANDS = new Set([
   "اوامر_سجن",
   "سجن_اعداد",

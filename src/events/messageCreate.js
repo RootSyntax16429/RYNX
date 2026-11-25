@@ -22,6 +22,28 @@ import {
 const MESSAGE_XP_RATE_LIMIT_ATTEMPTS = 12;
 const MESSAGE_XP_RATE_LIMIT_WINDOW_MS = 10000;
 
+const NO_PREFIX_MOD_COMMANDS = new Set([
+  'السجن',
+  'سجن_اعداد',
+  'سجن',
+  '',
+  'افراج',
+  'مسح',
+  'كتم',
+  'تكلم',
+  'باند',
+  'لاباند',
+  'طرد',
+  'تايم',
+  'لاتايم',
+  'تحذير',
+  'تحذيرات',
+  'قفل',
+  'افتح',
+  'اشراف',
+  'الاشراف',
+]);
+
 export default {
   name: Events.MessageCreate,
   async execute(message, client) {
@@ -35,6 +57,11 @@ export default {
         return;
       }
 
+      const directHandled = await handleDirectSnaiferCommands(message, client);
+      if (directHandled) {
+        return;
+      }
+
       await handlePrefixCommand(message, client);
 
       await handleLeveling(message, client);
@@ -43,6 +70,41 @@ export default {
     }
   }
 };
+
+async function handleDirectSnaiferCommands(message, client) {
+  try {
+    const trimmed = String(message.content || '').trim();
+    if (!trimmed) return false;
+
+    // لوحة سنيفر بدون بريفكس
+    if (trimmed === 'اوامر_سنيفر' || trimmed === 'اوامر سنيفر') {
+      const showCmd = client.commands?.get('show');
+      if (showCmd) {
+        await showCmd.execute(message, [], client);
+        return true;
+      }
+    }
+
+    // أوامر الإشراف والسجن بدون بريفكس أو ببريفكس ($ أو !)
+    const parts = trimmed.split(/\s+/);
+    const rawFirst = parts[0] || '';
+    const cleanedFirst = rawFirst.replace(/^[\$!]+/, '');
+
+    if (NO_PREFIX_MOD_COMMANDS.has(cleanedFirst)) {
+      const modCmd = client.commands?.get('modpanel');
+      if (modCmd) {
+        const args = parts.slice(1);
+        await modCmd.execute(message, args, client);
+        return true;
+      }
+    }
+
+    return false;
+  } catch (error) {
+    logger.error('Error in handleDirectSnaiferCommands:', error);
+    return false;
+  }
+}
 
 async function handlePrefixCommand(message, client) {
   try {

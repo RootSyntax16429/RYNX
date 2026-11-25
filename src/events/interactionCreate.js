@@ -19,7 +19,8 @@ import { resolveSlashAccessKey } from '../utils/messageAdapter.js';
 import { isCollectorManagedComponent } from '../utils/collectorComponents.js';
 import { ResponseCoordinator } from '../utils/responseCoordinator.js';
 import { enforceDefaultCommandPermissions } from '../utils/permissionGuard.js';
-import { handleJailInteraction } from "../commands/Moderation/modPanel.js";
+import { handleJailInteraction } from '../commands/Moderation/modPanel.js';
+
 const COMMAND_ERROR_SUBTYPES = {
   warn: 'warn_failed',
   kick: 'kick_failed',
@@ -57,6 +58,10 @@ export default {
       try {
         InteractionHelper.patchInteractionResponses(interaction);
         ResponseCoordinator.attach(interaction);
+
+        if (await handleJailInteraction(interaction)) {
+          return;
+        }
 
         if (interaction.isChatInputCommand()) {
           try {
@@ -417,7 +422,6 @@ export default {
 
           if (!modal) {
             if (!interaction.customId.includes(':')) {
-
               return;
             }
 

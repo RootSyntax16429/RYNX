@@ -23,6 +23,13 @@ export const COMMAND_ALIASES = {
     "انشاء_السجن",
     "إنشاء_السجن",
     "صيدنايا",
+    "اسباب_السجن",
+    "أسباب_السجن",
+    "اضف_سبب",
+    "إضافة_سبب",
+    "حذف_سبب",
+    "تصفير_الاسباب",
+    "تصفير_الأسباب",
     "اعفاء",
     "إعفاء",
     "طلب_اعفاء",
@@ -61,11 +68,17 @@ export const COMMAND_ALIASES = {
 };
 
 const ALIAS_TO_COMMAND = new Map();
+const ALIAS_TO_CANONICAL_ALIAS = new Map();
 
 for (const [canonicalName, aliases] of Object.entries(COMMAND_ALIASES)) {
-  ALIAS_TO_COMMAND.set(normalizeAlias(canonicalName), canonicalName);
+  const normCanonical = normalizeAlias(canonicalName);
+  ALIAS_TO_COMMAND.set(normCanonical, canonicalName);
+  ALIAS_TO_CANONICAL_ALIAS.set(normCanonical, canonicalName);
+
   for (const alias of aliases) {
-    ALIAS_TO_COMMAND.set(normalizeAlias(alias), canonicalName);
+    const normAlias = normalizeAlias(alias);
+    ALIAS_TO_COMMAND.set(normAlias, canonicalName);
+    ALIAS_TO_CANONICAL_ALIAS.set(normAlias, alias);
   }
 }
 
@@ -83,6 +96,20 @@ export function resolveCommandName(input) {
   return ALIAS_TO_COMMAND.get(firstToken) || null;
 }
 
+export function resolveMatchedAlias(input) {
+  if (!input) return null;
+  const cleaned = String(input).replace(/^[!$]+/, "").trim();
+  if (!cleaned) return null;
+
+  const normalized = normalizeAlias(cleaned);
+  if (ALIAS_TO_CANONICAL_ALIAS.has(normalized)) {
+    return ALIAS_TO_CANONICAL_ALIAS.get(normalized);
+  }
+
+  const firstToken = normalized.split(" ")[0];
+  return ALIAS_TO_CANONICAL_ALIAS.get(firstToken) || null;
+}
+
 export function getCommandAliases(commandName) {
   const key = normalizeAlias(commandName);
   const canonical = ALIAS_TO_COMMAND.get(key) || key;
@@ -96,6 +123,7 @@ export function isKnownAlias(input) {
 export default {
   COMMAND_ALIASES,
   resolveCommandName,
+  resolveMatchedAlias,
   getCommandAliases,
   isKnownAlias,
 };

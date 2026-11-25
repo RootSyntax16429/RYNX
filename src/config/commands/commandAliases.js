@@ -41,6 +41,8 @@ export const commandAliases = {
   "تذكره": "create_ticket",
   "تذكرة": "create_ticket",
   "تذاكر": "create_ticket",
+  "لوحة_التذاكر": "create_ticket",
+  "لوحه_التذاكر": "create_ticket",
   "اغلاق": "close",
 
   // الترحيب والرولات

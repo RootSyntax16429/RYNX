@@ -4,7 +4,8 @@ function normalizeAlias(value = "") {
     .replace(/[إأآا]/g, "ا")
     .replace(/ى/g, "ي")
     .replace(/ة/g, "ه")
-    .replace(/[\u064B-\u065F]/g, "")
+    .replace(/[\u064B-\u065F\u0640]/g, "")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
@@ -19,6 +20,12 @@ export const COMMAND_ALIASES = {
     "سجن_اعداد",
     "اعداد_السجن",
     "إعداد_السجن",
+    "انشاء_السجن",
+    "إنشاء_السجن",
+    "صيدنايا",
+    "اعفاء",
+    "إعفاء",
+    "طلب_اعفاء",
     "سجن",
     "السجن",
     "فك_سجن",
@@ -66,7 +73,14 @@ export function resolveCommandName(input) {
   if (!input) return null;
   const cleaned = String(input).replace(/^[!$]+/, "").trim();
   if (!cleaned) return null;
-  return ALIAS_TO_COMMAND.get(normalizeAlias(cleaned)) || null;
+
+  const normalized = normalizeAlias(cleaned);
+  if (ALIAS_TO_COMMAND.has(normalized)) {
+    return ALIAS_TO_COMMAND.get(normalized);
+  }
+
+  const firstToken = normalized.split(" ")[0];
+  return ALIAS_TO_COMMAND.get(firstToken) || null;
 }
 
 export function getCommandAliases(commandName) {
@@ -75,8 +89,13 @@ export function getCommandAliases(commandName) {
   return COMMAND_ALIASES[canonical] || [];
 }
 
+export function isKnownAlias(input) {
+  return Boolean(resolveCommandName(input));
+}
+
 export default {
   COMMAND_ALIASES,
   resolveCommandName,
   getCommandAliases,
+  isKnownAlias,
 };

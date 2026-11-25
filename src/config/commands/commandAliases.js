@@ -1,64 +1,82 @@
-export const commandAliases = {
-  // لوحة سنيفر
-  "اوامر_سنيفر": "show",
-  "اوامر سنيفر": "show",
-  "اظهار": "show",
-  "إظهار": "show",
-  "اوامر": "show",
-  "الاوامر": "show",
+function normalizeAlias(value = "") {
+  return String(value)
+    .toLowerCase()
+    .replace(/[إأآا]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/[\u064B-\u065F]/g, "")
+    .trim();
+}
 
-  // الإشراف ونظام السجن
-  "اشراف": "modpanel",
-  "الاشراف": "modpanel",
-  "مسح": "modpanel",
-  "كتم": "modpanel",
-  "اسكت": "modpanel",
-  "تكلم": "modpanel",
-  "انبح": "modpanel",
-  "باند": "modpanel",
-  "تف": "modpanel",
-  "لاباند": "modpanel",
-  "طرد": "modpanel",
-  "بنعالي": "modpanel",
-  "تايم": "modpanel",
-  "لاتايم": "modpanel",
-  "تحذير": "modpanel",
-  "تحذيرات": "modpanel",
-  "قفل": "modpanel",
-  "فتح": "modpanel",
-  "سجن": "modpanel",
-  "السجن": "modpanel",
-  "اوامر_سجن": "modpanel",
-  "سجن_اعداد": "modpanel",
-  "إعداد_السجن": "modpanel",
-  "اعداد_السجن": "modpanel",
-  "فك_سجن": "modpanel",
-  "افراج": "modpanel",
-
-  // التذاكر
-  "انشاء_تذكره": "create_ticket",
-  "انشاء_تذكرة": "create_ticket",
-  "تذكره": "create_ticket",
-  "تذكرة": "create_ticket",
-  "تذاكر": "create_ticket",
-  "لوحة_التذاكر": "create_ticket",
-  "لوحه_التذاكر": "create_ticket",
-  "اغلاق": "close",
-
-  // الترحيب والرولات
-  "ترحيب": "welcome",
-  "وداع": "goodbye",
-  "تلقائي": "autorole",
+export const COMMAND_ALIASES = {
+  modpanel: [
+    "modpanel",
+    "اوامر_سجن",
+    "اوامر سجن",
+    "اشراف",
+    "الاشراف",
+    "الإشراف",
+    "سجن_اعداد",
+    "اعداد_السجن",
+    "إعداد_السجن",
+    "سجن",
+    "السجن",
+    "فك_سجن",
+    "فك سجن",
+    "افراج",
+    "الإفراج",
+    "مسح",
+    "كتم",
+    "اسكت",
+    "تكلم",
+    "انبح",
+    "باند",
+    "تف",
+    "لاباند",
+    "طرد",
+    "بنعالي",
+    "تايم",
+    "لاتايم",
+    "تحذير",
+    "تحذيرات",
+    "قفل",
+    "فتح",
+  ],
+  commands: [
+    "commands",
+    "help",
+    "اوامر",
+    "الاوامر",
+    "الأوامر",
+    "اوامر_سنيفر",
+    "اوامر سنيفر",
+  ],
 };
 
-export function resolveCommandAlias(name = "") {
-  const raw = String(name).trim();
-  const lower = raw.toLowerCase();
-  return commandAliases[raw] || commandAliases[lower] || lower;
+const ALIAS_TO_COMMAND = new Map();
+
+for (const [canonicalName, aliases] of Object.entries(COMMAND_ALIASES)) {
+  ALIAS_TO_COMMAND.set(normalizeAlias(canonicalName), canonicalName);
+  for (const alias of aliases) {
+    ALIAS_TO_COMMAND.set(normalizeAlias(alias), canonicalName);
+  }
 }
 
-export function resolveSubcommandAlias(subcommand = "") {
-  const raw = String(subcommand).trim();
-  const lower = raw.toLowerCase();
-  return commandAliases[raw] || commandAliases[lower] || lower;
+export function resolveCommandName(input) {
+  if (!input) return null;
+  const cleaned = String(input).replace(/^[!$]+/, "").trim();
+  if (!cleaned) return null;
+  return ALIAS_TO_COMMAND.get(normalizeAlias(cleaned)) || null;
 }
+
+export function getCommandAliases(commandName) {
+  const key = normalizeAlias(commandName);
+  const canonical = ALIAS_TO_COMMAND.get(key) || key;
+  return COMMAND_ALIASES[canonical] || [];
+}
+
+export default {
+  COMMAND_ALIASES,
+  resolveCommandName,
+  getCommandAliases,
+};
